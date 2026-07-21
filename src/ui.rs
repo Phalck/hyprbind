@@ -8,7 +8,10 @@ use crate::app::{App, Mode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let footer_height = if app.mode == Mode::Edit { 2 } else { 1 };
+    let footer_height = match app.mode {
+        Mode::EditKey | Mode::EditTarget => 2,
+        Mode::Normal | Mode::Search => 1,
+    };
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
@@ -101,13 +104,8 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = match app.mode {
-        Mode::Edit => {
-            let line_no = app.editing_line.unwrap_or(0);
-            vec![
-                Line::from(format!("editing line {line_no}: {}▏", app.edit_buffer)),
-                Line::from("Enter save   Esc cancel"),
-            ]
-        }
+        Mode::EditKey => edit_footer_lines("key", app),
+        Mode::EditTarget => edit_footer_lines("target", app),
         Mode::Search => vec![Line::from(format!(
             "/{}▏   Enter apply   Esc cancel",
             app.query
@@ -118,10 +116,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             } else if let Some(status) = &app.status {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
-                Line::from("/ search   e edit   ↑/k ↓/j move   g/G top/bottom   q quit")
+                Line::from(
+                    "/ search   e edit key   t edit target   ↑/k ↓/j move   g/G top/bottom   q quit",
+                )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e edit   ↑/k ↓/j move   g/G top/bottom   q quit",
+                    "filter: \"{}\"   / change filter   e edit key   t edit target   ↑/k ↓/j move   g/G top/bottom   q quit",
                     app.query
                 ))
             };
@@ -129,4 +129,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
     };
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
+    let line_no = app.editing_line.unwrap_or(0);
+    vec![
+        Line::from(format!("editing {field} (line {line_no}): {}▏", app.edit_buffer)),
+        Line::from("Enter save   Esc cancel"),
+    ]
 }

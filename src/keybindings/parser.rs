@@ -66,29 +66,31 @@ fn parse_bind_line(
     let field_count = if bind_type == "bindd" { 5 } else { 4 };
     let fields: Vec<&str> = body.splitn(field_count, ',').map(str::trim).collect();
 
-    let mods = fields
-        .first()
-        .map(|m| {
-            m.split_whitespace()
-                .map(|tok| substitute(tok, vars))
-                .collect()
-        })
-        .unwrap_or_default();
-    let key = fields.get(1).map(|k| substitute(k, vars)).unwrap_or_default();
+    let mods_raw = fields.first().copied().unwrap_or("").to_string();
+    let key_raw = fields.get(1).copied().unwrap_or("").to_string();
 
-    let (description, dispatcher, args) = if bind_type == "bindd" {
+    let mods = mods_raw
+        .split_whitespace()
+        .map(|tok| substitute(tok, vars))
+        .collect();
+    let key = substitute(&key_raw, vars);
+
+    let (description_raw, dispatcher_raw, args_raw) = if bind_type == "bindd" {
         (
-            fields.get(2).map(|d| substitute(d, vars)),
-            fields.get(3).map(|d| substitute(d, vars)).unwrap_or_default(),
-            fields.get(4).map(|a| substitute(a, vars)).unwrap_or_default(),
+            fields.get(2).map(|d| d.to_string()),
+            fields.get(3).copied().unwrap_or("").to_string(),
+            fields.get(4).copied().unwrap_or("").to_string(),
         )
     } else {
         (
             None,
-            fields.get(2).map(|d| substitute(d, vars)).unwrap_or_default(),
-            fields.get(3).map(|a| substitute(a, vars)).unwrap_or_default(),
+            fields.get(2).copied().unwrap_or("").to_string(),
+            fields.get(3).copied().unwrap_or("").to_string(),
         )
     };
+    let description = description_raw.as_deref().map(|d| substitute(d, vars));
+    let dispatcher = substitute(&dispatcher_raw, vars);
+    let args = substitute(&args_raw, vars);
 
     if key.is_empty() && dispatcher.is_empty() {
         return None;
@@ -104,6 +106,11 @@ fn parse_bind_line(
         comment,
         line: line_no,
         raw: raw_line.to_string(),
+        mods_raw,
+        key_raw,
+        description_raw,
+        dispatcher_raw,
+        args_raw,
     })
 }
 

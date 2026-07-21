@@ -49,7 +49,8 @@ cargo run
 | `g` | Jump to the first shortcut |
 | `G` | Jump to the last shortcut |
 | `/` | Start or edit a search |
-| `e` or Enter | Edit the selected shortcut |
+| `e` | Edit the selected shortcut's key |
+| `t` | Edit the selected shortcut's target (dispatcher and arguments) |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from.
@@ -74,23 +75,39 @@ backspacing to an empty query and pressing Enter (or by pressing Esc).
 
 ### Editing
 
-Press `e` or Enter on a selected shortcut to edit it. This opens its exact
-source line as an editable text field, prefilled with the original text
-(including modifiers, key, dispatcher, arguments, `$VAR` references, and any
-trailing comment). Change whatever you need, then save.
+Editing is split into two scoped commands rather than one free-form line
+editor:
+
+- `e` edits the **key**: the modifiers and key, e.g. `$mainMod SHIFT, Q`.
+- `t` edits the **target**: the dispatcher and its arguments, e.g.
+  `exec, ~/.config/ml4w/settings/terminal.sh`.
+
+Either opens a text field prefilled with that field exactly as written in the
+source, including any `$VAR` reference — editing the key never disturbs the
+target, and vice versa, so a variable like `$mainMod` in the half you're not
+touching survives untouched.
 
 | Key | Action |
 | --- | --- |
-| Any character | Insert at the end of the line |
+| Any character | Insert at the end of the field |
 | Backspace | Remove the last character |
-| Enter | Save: write the line back to the file, in place |
+| Enter | Save: write the change back to the file, in place |
 | Esc | Cancel without touching the file |
 
-Saving replaces only that one line in the source file; every other line is
-left byte-for-byte as it was. The write is atomic (written to a temp file,
-then renamed into place), so a failure partway through can't leave the
-keybindings file half-written. After a successful save, the table reloads
-from disk and the row you edited stays selected.
+For the key field, text before the first comma is the modifiers and text
+after is the key (no comma means no modifiers, just a key). For the target
+field, text before the first comma is the dispatcher and the rest is its
+arguments (no comma means a dispatcher with no arguments, e.g. `killactive`).
+
+Saving rebuilds the whole source line from its fields (mods, key,
+description, dispatcher, arguments, comment) and replaces only that one line
+in the file; every other line is left byte-for-byte as it was. Field content
+is always preserved exactly, but separators are normalized to a consistent
+`field, field, ... # comment` style, so any original column-alignment padding
+around commas or before a comment is lost on save. The write is atomic
+(written to a temp file, then renamed into place), so a failure partway
+through can't leave the keybindings file half-written. After a successful
+save, the table reloads from disk and the row you edited stays selected.
 
 Because this edits the file Hyprland reads its keybindings from, keep that
 dotfiles path under version control (as ML4W setups normally are) so you can

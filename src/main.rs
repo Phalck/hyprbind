@@ -31,7 +31,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('g') => app.select_first(),
                     KeyCode::Char('G') => app.select_last(),
                     KeyCode::Char('/') => app.enter_search(),
-                    KeyCode::Char('e') | KeyCode::Enter => app.start_edit(),
+                    KeyCode::Char('e') => app.start_edit_key(),
+                    KeyCode::Char('t') => app.start_edit_target(),
                     _ => {}
                 },
                 Mode::Search => match key.code {
@@ -47,7 +48,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     }
                     _ => {}
                 },
-                Mode::Edit => match key.code {
+                Mode::EditKey | Mode::EditTarget => match key.code {
                     KeyCode::Enter => app.save_edit(),
                     KeyCode::Esc => app.cancel_edit(),
                     KeyCode::Backspace => app.pop_edit_char(),

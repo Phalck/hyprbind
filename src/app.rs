@@ -17,8 +17,10 @@ fn default_keybindings_path() -> PathBuf {
 pub enum Mode {
     Normal,
     Search,
-    /// Editing the raw source line of the selected shortcut.
-    Edit,
+    /// Editing the mods/key field of the selected shortcut.
+    EditKey,
+    /// Editing the dispatcher/args field of the selected shortcut.
+    EditTarget,
 }
 
 pub struct App {
@@ -123,19 +125,28 @@ impl App {
         self.table_state.select_first();
     }
 
-    /// Start editing the raw source line of the currently selected shortcut.
-    pub fn start_edit(&mut self) {
+    /// Start editing the mods/key field of the currently selected shortcut.
+    pub fn start_edit_key(&mut self) {
+        self.start_edit(Mode::EditKey, |s| s.key_edit_buffer());
+    }
+
+    /// Start editing the dispatcher/args field of the currently selected shortcut.
+    pub fn start_edit_target(&mut self) {
+        self.start_edit(Mode::EditTarget, |s| s.target_edit_buffer());
+    }
+
+    fn start_edit(&mut self, mode: Mode, buffer_for: impl FnOnce(&Shortcut) -> String) {
         let Some(idx) = self.table_state.selected() else {
             return;
         };
-        let selected = self.visible().get(idx).map(|s| (s.raw.clone(), s.line));
-        let Some((raw, line)) = selected else {
+        let selected = self.visible().get(idx).map(|s| (buffer_for(s), s.line));
+        let Some((buffer, line)) = selected else {
             return;
         };
         self.status = None;
-        self.edit_buffer = raw;
+        self.edit_buffer = buffer;
         self.editing_line = Some(line);
-        self.mode = Mode::Edit;
+        self.mode = mode;
     }
 
     pub fn cancel_edit(&mut self) {
@@ -152,20 +163,46 @@ impl App {
         self.edit_buffer.pop();
     }
 
-    /// Write the edit buffer back to `source_path` in place of its original line, then reload.
+    /// Rebuild the source line from the edit buffer (interpreted according to which field is
+    /// being edited) and write it back to `source_path` in place, then reload.
     pub fn save_edit(&mut self) {
         let Some(line_no) = self.editing_line else {
             return;
         };
-        match write_line(&self.source_path, line_no, &self.edit_buffer) {
-            Ok(()) => {
-                self.status = Some("Saved.".to_string());
-                self.reload_and_reselect(line_no);
+        let shortcut = self.shortcuts.iter().find(|s| s.line == line_no);
+        let new_line = match (self.mode, shortcut) {
+            (Mode::EditKey, Some(shortcut)) => {
+                let (mods_raw, key_raw) = match self.edit_buffer.split_once(',') {
+                    Some((mods, key)) => (mods.trim(), key.trim()),
+                    None => ("", self.edit_buffer.trim()),
+                };
+                Some(shortcut.with_key(mods_raw, key_raw))
             }
-            Err(err) => {
-                self.status = Some(format!("Failed to save: {err}"));
+            (Mode::EditTarget, Some(shortcut)) => {
+                let (dispatcher_raw, args_raw) = match self.edit_buffer.split_once(',') {
+                    Some((dispatcher, args)) => (dispatcher.trim(), args.trim()),
+                    None => (self.edit_buffer.trim(), ""),
+                };
+                Some(shortcut.with_target(dispatcher_raw, args_raw))
+            }
+            _ => None,
+        };
+
+        match new_line {
+            Some(new_line) => match write_line(&self.source_path, line_no, &new_line) {
+                Ok(()) => {
+                    self.status = Some("Saved.".to_string());
+                    self.reload_and_reselect(line_no);
+                }
+                Err(err) => {
+                    self.status = Some(format!("Failed to save: {err}"));
+                }
+            },
+            None => {
+                self.status = Some("Couldn't save: shortcut no longer found.".to_string());
             }
         }
+
         self.edit_buffer.clear();
         self.editing_line = None;
         self.mode = Mode::Normal;
