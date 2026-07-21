@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use ratatui::widgets::TableState;
 
+use crate::config::{self, Settings};
+use crate::fs_util::write_atomic;
 use crate::keybindings::{self, Shortcut, Variable};
 
 const TEMPLATE_EXTENSION: &str = "hbt";
@@ -92,12 +94,19 @@ pub struct App {
     pub template_files: Vec<PathBuf>,
     /// File name of the template currently being previewed, for display purposes.
     pub template_source_name: Option<String>,
+
+    /// Where persisted settings are read from and written to. An explicit field (rather than
+    /// always calling `config::config_path()` directly) so tests can point it at a scratch path
+    /// instead of the real `~/.config/hyprbind/config`.
+    config_path: PathBuf,
 }
 
 impl App {
     pub fn new() -> Self {
+        let config_path = config::config_path();
+        let settings = config::load_from(&config_path);
         let mut app = Self {
-            source_path: default_keybindings_path(),
+            source_path: settings.source_path.clone().unwrap_or_else(default_keybindings_path),
             shortcuts: Vec::new(),
             variables: Vec::new(),
             table_state: TableState::default(),
@@ -110,24 +119,32 @@ impl App {
             resume_line: None,
             status: None,
             status_set_at: None,
-            template_folder: home_dir(),
+            template_folder: settings.template_folder.clone().unwrap_or_else(home_dir),
             template_candidates: Vec::new(),
             template_selected: HashSet::new(),
             template_table_state: TableState::default(),
             template_files: Vec::new(),
             template_source_name: None,
+            config_path,
         };
         app.load();
 
-        // The hardcoded ML4W default isn't there (or has nothing in it) — fall back to
-        // searching the standard Hyprland config directory for the real keybindings file,
-        // rather than just giving up. Never overrides a path the user sets manually afterward.
+        // Whatever we started from (a persisted path or the hardcoded ML4W default) isn't there
+        // or has nothing in it — fall back to searching the standard Hyprland config directory
+        // for the real keybindings file, rather than just giving up. If that finds one, persist
+        // it too: we only get here because the previous choice was already broken, so there's
+        // nothing worth preserving by leaving it in place.
         if app.shortcuts.is_empty() {
             if let Some(discovered) = keybindings::discover(&home_dir().join(".config/hypr")) {
                 app.source_path = discovered.clone();
                 app.load();
                 if !app.shortcuts.is_empty() {
-                    app.set_status(format!("Auto-detected keybindings file: {}", discovered.display()));
+                    let saved = app.persist_settings().is_ok();
+                    app.set_status(format!(
+                        "Auto-detected keybindings file: {}{}",
+                        discovered.display(),
+                        if saved { " (saved)." } else { "." }
+                    ));
                 }
             }
         }
@@ -196,6 +213,18 @@ impl App {
     fn clear_status(&mut self) {
         self.status = None;
         self.status_set_at = None;
+    }
+
+    /// Write the current `source_path` and `template_folder` to `self.config_path`, so they're
+    /// picked up again on the next launch instead of resetting to the hardcoded defaults.
+    /// Best-effort: callers decide how (or whether) to surface a failure, since losing
+    /// persistence is much less serious than losing the change it's persisting.
+    fn persist_settings(&self) -> io::Result<()> {
+        let settings = Settings {
+            source_path: Some(self.source_path.clone()),
+            template_folder: Some(self.template_folder.clone()),
+        };
+        config::save_to(&self.config_path, &settings)
     }
 
     /// Clear `status` once it's been showing for `STATUS_TIMEOUT`, so the footer falls back to
@@ -454,7 +483,12 @@ impl App {
                 self.variables = config.variables;
                 self.error = None;
                 self.table_state.select_first();
-                self.set_status(format!("Now using {}.", expanded.display()));
+                let saved = self.persist_settings().is_ok();
+                self.set_status(format!(
+                    "Now using {}{}",
+                    expanded.display(),
+                    if saved { " (saved)." } else { "." }
+                ));
             }
             Err(err) => {
                 self.set_status(format!("Couldn't read {}: {err}", expanded.display()));
@@ -483,8 +517,13 @@ impl App {
         let expanded = expand_home(input);
         match fs::create_dir_all(&expanded) {
             Ok(()) => {
-                self.set_status(format!("Template folder set to {}.", expanded.display()));
-                self.template_folder = expanded;
+                self.template_folder = expanded.clone();
+                let saved = self.persist_settings().is_ok();
+                self.set_status(format!(
+                    "Template folder set to {}{}",
+                    expanded.display(),
+                    if saved { " (saved)." } else { "." }
+                ));
             }
             Err(err) => {
                 self.set_status(format!("Couldn't use {}: {err}", expanded.display()));
@@ -717,19 +756,6 @@ fn replace_line(contents: &str, line_no: usize, new_line: &str) -> Option<String
     Some(result)
 }
 
-/// Atomically write `contents` to `path` (write to a sibling `.tmp` file, then rename over the
-/// original) so a failed write can never leave a partially-written file behind.
-fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
-    let tmp_path = {
-        let mut s = path.as_os_str().to_owned();
-        s.push(".tmp");
-        PathBuf::from(s)
-    };
-    fs::write(&tmp_path, contents)?;
-    fs::rename(&tmp_path, path)?;
-    Ok(())
-}
-
 /// Read `path`, replace line `line_no` with `new_line`, and write the result back atomically.
 fn write_line(path: &Path, line_no: usize, new_line: &str) -> io::Result<()> {
     let contents = fs::read_to_string(path)?;
@@ -842,6 +868,10 @@ mod tests {
             template_table_state: TableState::default(),
             template_files: Vec::new(),
             template_source_name: None,
+            // Guaranteed to fail (/dev/null isn't a directory, so create_dir_all on any path
+            // under it errors out) so a stray persist_settings() call in a test can never write
+            // to a real location, let alone the user's actual ~/.config/hyprbind/config.
+            config_path: PathBuf::from("/dev/null/hyprbind-test-config"),
         }
     }
 
@@ -1025,6 +1055,45 @@ mod tests {
         assert_eq!(app.mode, Mode::Normal);
 
         fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn save_source_path_persists_to_config_path() {
+        let target = std::env::temp_dir()
+            .join(format!("hyprbind-test-source-persist-target-{}.conf", std::process::id()));
+        fs::write(&target, "bind = SUPER, Q, killactive\n").unwrap();
+        let config_file = std::env::temp_dir()
+            .join(format!("hyprbind-test-source-persist-config-{}", std::process::id()));
+
+        let mut app = edit_app();
+        app.config_path = config_file.clone();
+        app.edit_buffer = target.display().to_string();
+        app.save_source_path();
+
+        let saved = fs::read_to_string(&config_file).unwrap();
+        assert!(saved.contains(&format!("source_path = {}", target.display())));
+
+        fs::remove_file(&target).unwrap();
+        fs::remove_file(&config_file).unwrap();
+    }
+
+    #[test]
+    fn save_template_folder_persists_to_config_path() {
+        let folder = std::env::temp_dir()
+            .join(format!("hyprbind-test-template-persist-folder-{}", std::process::id()));
+        let config_file = std::env::temp_dir()
+            .join(format!("hyprbind-test-template-persist-config-{}", std::process::id()));
+
+        let mut app = edit_app();
+        app.config_path = config_file.clone();
+        app.edit_buffer = folder.display().to_string();
+        app.save_template_folder();
+
+        let saved = fs::read_to_string(&config_file).unwrap();
+        assert!(saved.contains(&format!("template_folder = {}", folder.display())));
+
+        fs::remove_dir_all(&folder).unwrap();
+        fs::remove_file(&config_file).unwrap();
     }
 
     fn sample_shortcut(line: usize, key: &str) -> Shortcut {

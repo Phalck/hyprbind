@@ -150,18 +150,23 @@ afterward.
 
 ### Keybindings file location
 
-At startup, hyprbind picks a keybindings file to use in two steps:
+At startup, hyprbind picks a keybindings file to use in three steps:
 
-1. Try the ML4W default path (see [What it does](#what-it-does)).
-2. If that's missing or has no shortcuts in it, search `~/.config/hypr`
-   recursively for `.conf` files, parse each one, and switch to whichever has
-   the most recognizable shortcuts. This follows symlinked directories (so
-   dotfiles managers that populate `~/.config/hypr` via symlinks, including
-   ML4W's own, still resolve correctly) but is cycle-safe. If this finds a
-   file, the status line announces it: `Auto-detected keybindings file: ...`.
+1. Use whatever path was persisted from a previous run (see
+   [Persisted settings](#persisted-settings) below), if any.
+2. Otherwise, try the ML4W default path (see [What it does](#what-it-does)).
+3. If that's missing or has no shortcuts in it either, search
+   `~/.config/hypr` recursively for `.conf` files, parse each one, and
+   switch to whichever has the most recognizable shortcuts. This follows
+   symlinked directories (so dotfiles managers that populate
+   `~/.config/hypr` via symlinks, including ML4W's own, still resolve
+   correctly) but is cycle-safe. If this finds a file, the status line
+   announces it — `Auto-detected keybindings file: ...` — and that path is
+   persisted too, on the reasoning that whatever step 1 or 2 pointed at is
+   now known to be broken, so there's nothing worth keeping around.
 
-If neither step finds anything, hyprbind starts with an empty list and an
-error naming the path it tried, pointing you at `S`.
+If nothing is found at all, hyprbind starts with an empty list and an error
+naming the path it tried, pointing you at `S`.
 
 Press `S` at any time to set the path directly — it opens the same text
 field as the other settings above, prefilled with the current path (`~` is
@@ -172,8 +177,16 @@ if that file exists and has at least one shortcut in it. If it doesn't
 already using stays active — you're never left looking at a blank list with
 no way back.
 
-This setting isn't persisted between runs, the same as the template folder:
-each launch starts over from step 1 above.
+### Persisted settings
+
+The keybindings file path and the template folder both persist across runs,
+in `~/.config/hyprbind/config` — a plain `key = value` text file, not a
+structured format like TOML, since there are only two settings to store.
+Every time either is changed successfully (`S` or `T`), it's written there
+immediately, and the status line's confirmation gets a `(saved)` suffix to
+confirm it. There's no separate command to edit this file's own location or
+turn persistence off; delete it (or a line from it) to reset that setting
+back to the automatic behavior described above.
 
 ### Templates
 
@@ -225,8 +238,10 @@ skipped.
 Run the test suite, which covers the keybinding parser against representative
 `bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
 keys with no modifiers, search matching, the line-splicing logic used to
-write an edit back to the file, template save/list/append helpers, and the
-keybindings-file auto-detection scan (including symlink-cycle safety):
+write an edit back to the file, template save/list/append helpers, the
+keybindings-file auto-detection scan (including symlink-cycle safety), and
+the persisted-settings file (parsing, round-tripping, and the app-level
+integration that writes it on a successful `S`/`T`):
 
 ```sh
 cargo test
@@ -245,6 +260,8 @@ src/
   main.rs               entry point and the key handling loop
   app.rs                application state: loaded shortcuts, selection, errors
   ui.rs                 rendering: title bar, table, footer
+  config.rs             reads/writes ~/.config/hyprbind/config
+  fs_util.rs            shared atomic-write helper
   keybindings/
     model.rs             the Shortcut data type
     parser.rs             parses a Hyprland keybindings .conf file

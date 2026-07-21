@@ -1,4 +1,6 @@
 mod app;
+mod config;
+mod fs_util;
 mod keybindings;
 mod ui;
 
