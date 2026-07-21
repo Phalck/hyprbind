@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use crate::app::{App, Mode};
@@ -133,9 +133,19 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
     let line_no = app.editing_line.unwrap_or(0);
-    let (before, after) = app.edit_buffer.split_at(app.edit_cursor_byte_offset());
-    vec![
-        Line::from(format!("editing {field} (line {line_no}): {before}▏{after}")),
-        Line::from("Enter save   Esc cancel   ←/→ move   Home/End jump"),
-    ]
+    let cursor_byte = app.edit_cursor_byte_offset();
+    let before = app.edit_buffer[..cursor_byte].to_string();
+    let mut rest = app.edit_buffer[cursor_byte..].chars();
+    // Highlight the character the cursor sits on, like a terminal block cursor, instead of
+    // inserting a separate cursor glyph that would shift everything after it over by a cell.
+    let under_cursor = rest.next().unwrap_or(' ').to_string();
+    let after: String = rest.collect();
+
+    let prompt = Line::from(vec![
+        Span::raw(format!("editing {field} (line {line_no}): {before}")),
+        Span::styled(under_cursor, Style::default().add_modifier(Modifier::REVERSED)),
+        Span::raw(after),
+    ]);
+
+    vec![prompt, Line::from("Enter save   Esc cancel   ←/→ move   Home/End jump")]
 }
