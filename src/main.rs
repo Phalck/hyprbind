@@ -3,12 +3,17 @@ mod keybindings;
 mod ui;
 
 use std::io;
+use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use app::{App, Mode};
+
+/// How often the loop wakes up even without input, so a status message set by
+/// `App::set_status` can expire and clear itself on its own.
+const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
@@ -20,7 +25,12 @@ fn main() -> io::Result<()> {
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
     loop {
+        app.clear_expired_status();
         terminal.draw(|frame| ui::draw(frame, app))?;
+
+        if !event::poll(POLL_INTERVAL)? {
+            continue;
+        }
 
         if let Event::Key(key) = event::read()? {
             match app.mode {

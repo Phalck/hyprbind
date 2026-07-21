@@ -60,6 +60,11 @@ cargo run
 The header shows how many shortcuts were loaded and the path they came from.
 If parsing fails or the file is empty, the same area shows the error instead.
 
+Actions that report a result (saving an edit, saving or applying a template,
+setting the template folder) show it in the footer in place of the key hints.
+That message clears itself after 5 seconds, even if you don't press anything,
+so the hints come back on their own.
+
 ### Search and filtering
 
 Press `/` to open the search box. The table filters live as you type, matching

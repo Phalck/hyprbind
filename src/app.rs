@@ -2,12 +2,16 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use ratatui::widgets::TableState;
 
 use crate::keybindings::{self, Shortcut, Variable};
 
 const TEMPLATE_EXTENSION: &str = "hbt";
+/// How long a status message stays in the footer before it's cleared automatically, so the
+/// normal key-hint menu comes back without the user having to do anything.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
@@ -68,8 +72,10 @@ pub struct App {
     /// The shortcut selected when editing started, so a save can restore the selection even when
     /// the edited line isn't a shortcut at all (e.g. editing `$mainMod`).
     resume_line: Option<usize>,
-    /// Transient message shown in the footer after a save (success or failure).
+    /// Transient message shown in the footer after a save (success or failure). Clears itself
+    /// after `STATUS_TIMEOUT`; see `clear_expired_status`.
     pub status: Option<String>,
+    status_set_at: Option<Instant>,
 
     /// Folder templates are saved to and loaded from. Defaults to `$HOME`.
     pub template_folder: PathBuf,
@@ -101,6 +107,7 @@ impl App {
             editing_line: None,
             resume_line: None,
             status: None,
+            status_set_at: None,
             template_folder: home_dir(),
             template_candidates: Vec::new(),
             template_selected: HashSet::new(),
@@ -159,8 +166,27 @@ impl App {
         }
     }
 
-    pub fn enter_search(&mut self) {
+    fn set_status(&mut self, message: impl Into<String>) {
+        self.status = Some(message.into());
+        self.status_set_at = Some(Instant::now());
+    }
+
+    fn clear_status(&mut self) {
         self.status = None;
+        self.status_set_at = None;
+    }
+
+    /// Clear `status` once it's been showing for `STATUS_TIMEOUT`, so the footer falls back to
+    /// the normal key-hint menu on its own. Call this on every tick of the UI loop, not just on
+    /// key presses, since the whole point is that it fires without user input.
+    pub fn clear_expired_status(&mut self) {
+        if self.status_set_at.is_some_and(|set_at| set_at.elapsed() >= STATUS_TIMEOUT) {
+            self.clear_status();
+        }
+    }
+
+    pub fn enter_search(&mut self) {
+        self.clear_status();
         self.mode = Mode::Search;
     }
 
@@ -202,7 +228,7 @@ impl App {
         let Some((buffer, line)) = selected else {
             return;
         };
-        self.status = None;
+        self.clear_status();
         self.edit_cursor = buffer.chars().count();
         self.edit_buffer = buffer;
         self.editing_line = Some(line);
@@ -215,7 +241,7 @@ impl App {
     /// is remembered so it stays selected after the save reloads the list.
     pub fn start_edit_main_mod(&mut self) {
         let Some(var) = self.variables.iter().find(|v| v.name == "mainMod") else {
-            self.status = Some("No $mainMod variable found in the config.".to_string());
+            self.set_status("No $mainMod variable found in the config.".to_string());
             return;
         };
         let (value, line) = (var.value.clone(), var.line);
@@ -223,7 +249,7 @@ impl App {
         let current_idx = self.table_state.selected();
         let resume_line = current_idx.and_then(|idx| self.visible().get(idx).map(|s| s.line));
 
-        self.status = None;
+        self.clear_status();
         self.edit_cursor = value.chars().count();
         self.edit_buffer = value;
         self.editing_line = Some(line);
@@ -329,15 +355,15 @@ impl App {
         match new_line {
             Some(new_line) => match write_line(&self.source_path, line_no, &new_line) {
                 Ok(()) => {
-                    self.status = Some("Saved.".to_string());
+                    self.set_status("Saved.".to_string());
                     self.reload_and_reselect(self.resume_line.unwrap_or(line_no));
                 }
                 Err(err) => {
-                    self.status = Some(format!("Failed to save: {err}"));
+                    self.set_status(format!("Failed to save: {err}"));
                 }
             },
             None => {
-                self.status = Some("Couldn't save: not found in the current file.".to_string());
+                self.set_status("Couldn't save: not found in the current file.".to_string());
             }
         }
 
@@ -375,7 +401,7 @@ impl App {
     // ---- Template folder ----------------------------------------------------------------
 
     pub fn start_edit_template_folder(&mut self) {
-        self.status = None;
+        self.clear_status();
         self.edit_buffer = self.template_folder.display().to_string();
         self.edit_cursor = self.edit_buffer.chars().count();
         self.mode = Mode::TemplateFolder;
@@ -384,17 +410,17 @@ impl App {
     pub fn save_template_folder(&mut self) {
         let input = self.edit_buffer.trim();
         if input.is_empty() {
-            self.status = Some("Template folder can't be empty.".to_string());
+            self.set_status("Template folder can't be empty.".to_string());
             return;
         }
         let expanded = expand_home(input);
         match fs::create_dir_all(&expanded) {
             Ok(()) => {
-                self.status = Some(format!("Template folder set to {}.", expanded.display()));
+                self.set_status(format!("Template folder set to {}.", expanded.display()));
                 self.template_folder = expanded;
             }
             Err(err) => {
-                self.status = Some(format!("Couldn't use {}: {err}", expanded.display()));
+                self.set_status(format!("Couldn't use {}: {err}", expanded.display()));
             }
         }
         self.edit_buffer.clear();
@@ -406,7 +432,7 @@ impl App {
 
     /// Snapshot the currently visible shortcuts and open the save-template picker.
     pub fn start_template_save_select(&mut self) {
-        self.status = None;
+        self.clear_status();
         self.template_candidates = self.visible().into_iter().cloned().collect();
         self.template_selected.clear();
         self.template_table_state = TableState::default();
@@ -443,7 +469,7 @@ impl App {
     /// Move from picking rows to naming the file, if at least one row is checked.
     pub fn confirm_template_save_select(&mut self) {
         if self.template_selected.is_empty() {
-            self.status = Some("Select at least one shortcut first (Space to toggle).".to_string());
+            self.set_status("Select at least one shortcut first (Space to toggle).".to_string());
             return;
         }
         self.edit_buffer.clear();
@@ -456,11 +482,11 @@ impl App {
     pub fn save_template(&mut self) {
         let name = self.edit_buffer.trim();
         if name.is_empty() {
-            self.status = Some("Template name can't be empty.".to_string());
+            self.set_status("Template name can't be empty.".to_string());
             return;
         }
         if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
-            self.status = Some("Template name can't contain a path separator.".to_string());
+            self.set_status("Template name can't contain a path separator.".to_string());
             return;
         }
 
@@ -475,10 +501,10 @@ impl App {
         let path = self.template_folder.join(format!("{name}.{TEMPLATE_EXTENSION}"));
         match write_template(&self.template_folder, &path, &lines) {
             Ok(()) => {
-                self.status = Some(format!("Saved {count} shortcut(s) to {}.", path.display()));
+                self.set_status(format!("Saved {count} shortcut(s) to {}.", path.display()));
             }
             Err(err) => {
-                self.status = Some(format!("Failed to save template: {err}"));
+                self.set_status(format!("Failed to save template: {err}"));
             }
         }
 
@@ -488,7 +514,7 @@ impl App {
     // ---- Load template --------------------------------------------------------------------
 
     pub fn start_template_list(&mut self) {
-        self.status = None;
+        self.clear_status();
         self.template_files = list_template_files(&self.template_folder);
         self.template_table_state = TableState::default();
         if !self.template_files.is_empty() {
@@ -521,7 +547,7 @@ impl App {
 
         match keybindings::parse_file(&path) {
             Ok(config) if config.shortcuts.is_empty() => {
-                self.status = Some(format!("No shortcuts found in {}.", path.display()));
+                self.set_status(format!("No shortcuts found in {}.", path.display()));
             }
             Ok(config) => {
                 self.template_selected = config.shortcuts.iter().map(|s| s.line).collect();
@@ -533,7 +559,7 @@ impl App {
                 self.mode = Mode::TemplatePreview;
             }
             Err(err) => {
-                self.status = Some(format!("Couldn't read {}: {err}", path.display()));
+                self.set_status(format!("Couldn't read {}: {err}", path.display()));
             }
         }
     }
@@ -542,7 +568,7 @@ impl App {
     /// existing shortcut's key combo.
     pub fn apply_template_selection(&mut self) {
         if self.template_selected.is_empty() {
-            self.status = Some("Select at least one shortcut to apply (Space to toggle).".to_string());
+            self.set_status("Select at least one shortcut to apply (Space to toggle).".to_string());
             return;
         }
 
@@ -560,7 +586,7 @@ impl App {
         }
 
         if lines.is_empty() {
-            self.status = Some(format!("Nothing applied: {skipped} shortcut(s) already bound."));
+            self.set_status(format!("Nothing applied: {skipped} shortcut(s) already bound."));
             self.cancel_template();
             return;
         }
@@ -573,7 +599,7 @@ impl App {
 
         match append_lines(&self.source_path, self.template_source_name.as_deref(), &lines) {
             Ok(()) => {
-                self.status = Some(if skipped > 0 {
+                self.set_status(if skipped > 0 {
                     format!("Applied {applied}, skipped {skipped} (already bound).")
                 } else {
                     format!("Applied {applied} shortcut(s).")
@@ -588,7 +614,7 @@ impl App {
                 }
             }
             Err(err) => {
-                self.status = Some(format!("Failed to apply: {err}"));
+                self.set_status(format!("Failed to apply: {err}"));
             }
         }
     }
@@ -742,6 +768,7 @@ mod tests {
             editing_line: None,
             resume_line: None,
             status: None,
+            status_set_at: None,
             template_folder: PathBuf::from("/dev/null"),
             template_candidates: Vec::new(),
             template_selected: HashSet::new(),
@@ -847,6 +874,31 @@ mod tests {
         app.template_selected.insert(1);
         app.confirm_template_save_select();
         assert_eq!(app.mode, Mode::TemplateSaveName);
+    }
+
+    #[test]
+    fn set_status_records_when_it_was_set() {
+        let mut app = edit_app();
+        app.set_status("hi");
+        assert_eq!(app.status.as_deref(), Some("hi"));
+        assert!(app.status_set_at.is_some());
+    }
+
+    #[test]
+    fn clear_expired_status_clears_once_the_timeout_has_passed() {
+        let mut app = edit_app();
+        app.status = Some("old".to_string());
+        app.status_set_at = Some(Instant::now() - STATUS_TIMEOUT - Duration::from_millis(1));
+        app.clear_expired_status();
+        assert!(app.status.is_none());
+    }
+
+    #[test]
+    fn clear_expired_status_leaves_a_fresh_status_alone() {
+        let mut app = edit_app();
+        app.set_status("fresh");
+        app.clear_expired_status();
+        assert_eq!(app.status.as_deref(), Some("fresh"));
     }
 
     fn sample_shortcut(line: usize, key: &str) -> Shortcut {
