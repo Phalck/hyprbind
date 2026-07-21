@@ -2,10 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A terminal UI for viewing and editing Hyprland keyboard shortcuts. It targets
-keybinding files managed by the ML4W (My Linux 4 Wayland) dotfiles framework.
-Nothing about it is specific to CachyOS, or to any single machine: it works on
-any Linux system running Hyprland with an ML4W-style dotfiles layout.
+A terminal UI for viewing and editing Hyprland keyboard shortcuts. It works
+directly with Hyprland's own `bind` config syntax, not a distribution- or
+framework-specific format, so parsing and editing shortcuts works on any
+Hyprland setup, on any distribution. By default it looks for the keybindings
+file at the path used by the ML4W (My Linux 4 Wayland) dotfiles framework,
+which is currently the only location it knows to look.
 
 ## What it does
 
