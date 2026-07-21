@@ -21,7 +21,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         | Mode::TemplatePreview => 1,
     };
     let chunks = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(4),
         Constraint::Min(0),
         Constraint::Length(footer_height),
     ])
@@ -58,13 +58,69 @@ fn draw_title(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!("{} of {total} shortcuts", app.visible().len())
     };
-    let title = Paragraph::new(Line::from(format!(
-        "CachyCuts — {count_text} from {}",
-        app.source_path.display()
-    )))
-    .style(Style::default().fg(Color::Cyan))
-    .block(Block::default().borders(Borders::ALL));
+    let (name, tooltip) = mode_help(app.mode);
+
+    let lines = vec![
+        Line::from(format!(
+            "CachyCuts — {count_text} from {}",
+            app.source_path.display()
+        ))
+        .style(Style::default().fg(Color::Cyan)),
+        Line::from(vec![
+            Span::styled(name, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(format!(": {tooltip}")),
+        ]),
+    ];
+
+    let title = Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
     frame.render_widget(title, area);
+}
+
+/// Display name and one-line description of the command the user currently has selected (i.e.
+/// the active mode), shown in the header.
+fn mode_help(mode: Mode) -> (&'static str, &'static str) {
+    match mode {
+        Mode::Normal => (
+            "Browse",
+            "select a shortcut, then e/a/E to edit or t/l for templates",
+        ),
+        Mode::Search => (
+            "Search",
+            "type to filter shortcuts live; Enter applies, Esc clears",
+        ),
+        Mode::EditKey => (
+            "Edit key",
+            "change the modifiers and key of the selected shortcut",
+        ),
+        Mode::EditTarget => (
+            "Edit target",
+            "change the dispatcher and arguments of the selected shortcut",
+        ),
+        Mode::EditMainMod => (
+            "Edit $mainMod",
+            "change the value every shortcut's $mainMod reference resolves to",
+        ),
+        Mode::TemplateFolder => (
+            "Template folder",
+            "set where templates are saved to and loaded from",
+        ),
+        Mode::TemplateSaveSelect => (
+            "Save template",
+            "Space to check shortcuts, Enter to name and save them",
+        ),
+        Mode::TemplateSaveName => (
+            "Name template",
+            "type a file name; Enter writes the checked shortcuts",
+        ),
+        Mode::TemplateList => (
+            "Load template",
+            "pick a .hbt file to preview the shortcuts in it",
+        ),
+        Mode::TemplatePreview => (
+            "Apply template",
+            "Space to toggle, Enter applies the checked shortcuts",
+        ),
+    }
 }
 
 fn draw_message(frame: &mut Frame, area: Rect, message: &str) {

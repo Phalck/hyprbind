@@ -57,8 +57,11 @@ cargo run
 | `T` | Set the template folder |
 | `q` or Esc | Quit |
 
-The header shows how many shortcuts were loaded and the path they came from.
-If parsing fails or the file is empty, the same area shows the error instead.
+The header shows how many shortcuts were loaded and the path they came from,
+plus a second line naming whichever command is currently active (`Browse`,
+`Search`, `Edit key`, `Save template`, and so on) with a one-line reminder of
+what it does and how to use it — it updates as you move between commands.
+If parsing fails or the file is empty, the first line shows the error instead.
 
 Actions that report a result (saving an edit, saving or applying a template,
 setting the template folder) show it in the footer in place of the key hints.
