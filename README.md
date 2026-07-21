@@ -18,7 +18,8 @@ It understands the `bind` directive family used in that file (`bind`, `bindd`,
 `binde`, `bindm`, `bindle`, and similar variants), resolves `$VAR` references
 such as `$mainMod`, and pulls out each binding's modifiers, key, dispatcher,
 arguments, and description or trailing comment. The result is shown as a
-scrollable table so you can see every shortcut on the system at a glance.
+scrollable, searchable table so you can see every shortcut on the system at a
+glance.
 
 This is a read-only browser for now. It does not edit or write back to the
 dotfiles repository, and it does not parse the alternate Lua keybinding format
@@ -46,16 +47,34 @@ cargo run
 | `k` or Up | Move selection up |
 | `g` | Jump to the first shortcut |
 | `G` | Jump to the last shortcut |
+| `/` | Start or edit a search |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from.
 If parsing fails or the file is empty, the same area shows the error instead.
 
+### Search and filtering
+
+Press `/` to open the search box. The table filters live as you type, matching
+against the key combo, dispatcher and arguments, and description or comment of
+each shortcut, case-insensitively.
+
+| Key | Action |
+| --- | --- |
+| Any character | Add to the search query |
+| Backspace | Remove the last character |
+| Up / Down | Move selection within the filtered results |
+| Enter | Apply the filter and return to normal mode |
+| Esc | Cancel the search and clear the filter |
+
+While a filter is active, press `/` again to edit it, or clear it by
+backspacing to an empty query and pressing Enter (or by pressing Esc).
+
 ## Development
 
 Run the test suite, which covers the keybinding parser against representative
-`bind`/`bindd`/`binde` lines, variable substitution, and edge cases like
-function keys with no modifiers:
+`bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
+keys with no modifiers, and search matching:
 
 ```sh
 cargo test

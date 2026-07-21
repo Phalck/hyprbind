@@ -12,12 +12,20 @@ fn default_keybindings_path() -> PathBuf {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    Search,
+}
+
 pub struct App {
     pub source_path: PathBuf,
     pub shortcuts: Vec<Shortcut>,
     pub table_state: TableState,
     /// Set when the keybindings file couldn't be read or parsed to nothing.
     pub error: Option<String>,
+    pub query: String,
+    pub mode: Mode,
 }
 
 impl App {
@@ -45,29 +53,65 @@ impl App {
             shortcuts,
             table_state,
             error,
+            query: String::new(),
+            mode: Mode::Normal,
         }
     }
 
+    /// Shortcuts matching the current search query, in source order.
+    pub fn visible(&self) -> Vec<&Shortcut> {
+        if self.query.is_empty() {
+            self.shortcuts.iter().collect()
+        } else {
+            let query = self.query.to_lowercase();
+            self.shortcuts.iter().filter(|s| s.matches(&query)).collect()
+        }
+    }
+
+    pub fn enter_search(&mut self) {
+        self.mode = Mode::Search;
+    }
+
+    pub fn confirm_search(&mut self) {
+        self.mode = Mode::Normal;
+    }
+
+    pub fn cancel_search(&mut self) {
+        self.query.clear();
+        self.mode = Mode::Normal;
+        self.table_state.select_first();
+    }
+
+    pub fn push_query_char(&mut self, c: char) {
+        self.query.push(c);
+        self.table_state.select_first();
+    }
+
+    pub fn pop_query_char(&mut self) {
+        self.query.pop();
+        self.table_state.select_first();
+    }
+
     pub fn select_next(&mut self) {
-        if !self.shortcuts.is_empty() {
+        if !self.visible().is_empty() {
             self.table_state.select_next();
         }
     }
 
     pub fn select_previous(&mut self) {
-        if !self.shortcuts.is_empty() {
+        if !self.visible().is_empty() {
             self.table_state.select_previous();
         }
     }
 
     pub fn select_first(&mut self) {
-        if !self.shortcuts.is_empty() {
+        if !self.visible().is_empty() {
             self.table_state.select_first();
         }
     }
 
     pub fn select_last(&mut self) {
-        if !self.shortcuts.is_empty() {
+        if !self.visible().is_empty() {
             self.table_state.select_last();
         }
     }

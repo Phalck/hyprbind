@@ -42,4 +42,57 @@ impl Shortcut {
             .or(self.comment.as_deref())
             .unwrap_or("")
     }
+
+    /// Whether this shortcut matches a search query.
+    ///
+    /// `query_lower` must already be lowercased; this is the caller's responsibility so a
+    /// multi-item search doesn't re-lowercase the same query on every shortcut.
+    pub fn matches(&self, query_lower: &str) -> bool {
+        if query_lower.is_empty() {
+            return true;
+        }
+        self.key_combo().to_lowercase().contains(query_lower)
+            || self.action().to_lowercase().contains(query_lower)
+            || self.label().to_lowercase().contains(query_lower)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shortcut() -> Shortcut {
+        Shortcut {
+            bind_type: "bind".to_string(),
+            mods: vec!["SUPER".to_string(), "SHIFT".to_string()],
+            key: "A".to_string(),
+            description: None,
+            dispatcher: "exec".to_string(),
+            args: "~/.config/hypr/scripts/toggle-animations.sh".to_string(),
+            comment: Some("Toggle animations".to_string()),
+            line: 1,
+        }
+    }
+
+    #[test]
+    fn matches_key_combo_case_insensitively() {
+        assert!(shortcut().matches("shift"));
+        assert!(shortcut().matches("super + shift + a"));
+    }
+
+    #[test]
+    fn matches_action_and_label() {
+        assert!(shortcut().matches("toggle-animations"));
+        assert!(shortcut().matches("toggle animations"));
+    }
+
+    #[test]
+    fn empty_query_matches_everything() {
+        assert!(shortcut().matches(""));
+    }
+
+    #[test]
+    fn no_match_returns_false() {
+        assert!(!shortcut().matches("nonexistent"));
+    }
 }
