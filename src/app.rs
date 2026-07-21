@@ -922,7 +922,7 @@ mod tests {
 
     #[test]
     fn write_template_creates_folder_and_writes_resolved_lines() {
-        let dir = std::env::temp_dir().join(format!("cachycuts-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hyprbind-test-{}", std::process::id()));
         let folder = dir.join("templates");
         let path = folder.join("test.hbt");
 
@@ -938,7 +938,7 @@ mod tests {
 
     #[test]
     fn append_lines_adds_marker_comment_and_preserves_existing_content() {
-        let path = std::env::temp_dir().join(format!("cachycuts-test-append-{}.conf", std::process::id()));
+        let path = std::env::temp_dir().join(format!("hyprbind-test-append-{}.conf", std::process::id()));
         fs::write(&path, "bind = $mainMod, Q, killactive\n").unwrap();
 
         append_lines(&path, Some("gaming.hbt"), &["bind = SUPER, W, exec, foo".to_string()]).unwrap();
@@ -954,7 +954,7 @@ mod tests {
 
     #[test]
     fn list_template_files_filters_by_extension_and_sorts() {
-        let dir = std::env::temp_dir().join(format!("cachycuts-test-list-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hyprbind-test-list-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("b.hbt"), "").unwrap();
         fs::write(dir.join("a.hbt"), "").unwrap();
@@ -968,7 +968,7 @@ mod tests {
 
     #[test]
     fn list_template_files_on_missing_folder_returns_empty() {
-        let missing = std::env::temp_dir().join("cachycuts-does-not-exist-hopefully");
+        let missing = std::env::temp_dir().join("hyprbind-does-not-exist-hopefully");
         assert!(list_template_files(&missing).is_empty());
     }
 }

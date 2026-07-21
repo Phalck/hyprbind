@@ -4,7 +4,7 @@ Guidance for Claude Code when working in this repo.
 
 ## What this is
 
-CachyCuts: a TUI (Rust, ratatui + crossterm) for viewing and editing keyboard shortcuts on this machine. The machine runs Hyprland via the ML4W dotfiles framework.
+hyprbind: a TUI (Rust, ratatui + crossterm) for viewing and editing keyboard shortcuts on this machine. The machine runs Hyprland via the ML4W dotfiles framework.
 
 ## Where the shortcuts actually live
 

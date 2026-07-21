@@ -1,4 +1,4 @@
-# CachyCuts
+# hyprbind
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -9,7 +9,7 @@ any Linux system running Hyprland with an ML4W-style dotfiles layout.
 
 ## What it does
 
-CachyCuts parses a Hyprland keybinding file, by default:
+hyprbind parses a Hyprland keybinding file, by default:
 
 ```
 ~/.mydotfiles/com.ml4w.dotfiles/.config/hypr/conf/keybindings/default.conf
@@ -23,14 +23,14 @@ scrollable, searchable table so you can see every shortcut at a glance.
 
 Shortcuts can be edited in place: the change is written straight back to that
 same line in the source file, with everything else in the file left
-untouched. CachyCuts does not yet parse the alternate Lua keybinding format
+untouched. hyprbind does not yet parse the alternate Lua keybinding format
 (`default.lua`).
 
 ## Requirements
 
 - Rust (edition 2024 toolchain)
 - A dotfiles checkout at `~/.mydotfiles/com.ml4w.dotfiles/` with the keybindings
-  file listed above. If the file is missing, CachyCuts still starts and shows
+  file listed above. If the file is missing, hyprbind still starts and shows
   an error message instead of the table.
 
 ## Install and run

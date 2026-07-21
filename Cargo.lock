@@ -108,14 +108,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95832e849adfb21180ccb6826a99da14e5d266ae5c2e668e1602cf234f153797"
 
 [[package]]
-name = "cachycuts"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "ratatui",
-]
-
-[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -480,6 +472,14 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hyprbind"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "ratatui",
+]
 
 [[package]]
 name = "ident_case"

@@ -62,7 +62,7 @@ fn draw_title(frame: &mut Frame, app: &App, area: Rect) {
 
     let lines = vec![
         Line::from(format!(
-            "CachyCuts — {count_text} from {}",
+            "hyprbind — {count_text} from {}",
             app.source_path.display()
         ))
         .style(Style::default().fg(Color::Cyan)),
