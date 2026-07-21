@@ -1,5 +1,7 @@
 # CachyCuts
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A terminal UI for browsing keyboard shortcuts on this machine. The machine runs
 Hyprland, configured through the ML4W (My Linux 4 Wayland) dotfiles framework,
 and CachyCuts reads the keybindings straight out of that dotfiles repository.
