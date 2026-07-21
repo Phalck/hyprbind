@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use ratatui::widgets::TableState;
 
-use crate::keybindings::{self, Shortcut};
+use crate::keybindings::{self, Shortcut, Variable};
 
 /// Where the active Hyprland keybinding set lives, per the ML4W dotfiles layout.
 fn default_keybindings_path() -> PathBuf {
@@ -21,11 +21,14 @@ pub enum Mode {
     EditKey,
     /// Editing the dispatcher/args field of the selected shortcut.
     EditTarget,
+    /// Editing the value of the `$mainMod` variable.
+    EditMainMod,
 }
 
 pub struct App {
     pub source_path: PathBuf,
     pub shortcuts: Vec<Shortcut>,
+    pub variables: Vec<Variable>,
     pub table_state: TableState,
     /// Set when the keybindings file couldn't be read or parsed to nothing.
     pub error: Option<String>,
@@ -36,6 +39,9 @@ pub struct App {
     pub edit_cursor: usize,
     /// The source line number currently being edited, so a save knows where to splice.
     pub editing_line: Option<usize>,
+    /// The shortcut selected when editing started, so a save can restore the selection even when
+    /// the edited line isn't a shortcut at all (e.g. editing `$mainMod`).
+    resume_line: Option<usize>,
     /// Transient message shown in the footer after a save (success or failure).
     pub status: Option<String>,
 }
@@ -46,6 +52,7 @@ impl App {
         let mut app = Self {
             source_path,
             shortcuts: Vec::new(),
+            variables: Vec::new(),
             table_state: TableState::default(),
             error: None,
             query: String::new(),
@@ -53,6 +60,7 @@ impl App {
             edit_buffer: String::new(),
             edit_cursor: 0,
             editing_line: None,
+            resume_line: None,
             status: None,
         };
         app.load();
@@ -64,16 +72,19 @@ impl App {
 
     fn load(&mut self) {
         match keybindings::parse_file(&self.source_path) {
-            Ok(shortcuts) if shortcuts.is_empty() => {
+            Ok(config) if config.shortcuts.is_empty() => {
                 self.shortcuts = Vec::new();
+                self.variables = config.variables;
                 self.error = Some(format!("No shortcuts found in {}", self.source_path.display()));
             }
-            Ok(shortcuts) => {
-                self.shortcuts = shortcuts;
+            Ok(config) => {
+                self.shortcuts = config.shortcuts;
+                self.variables = config.variables;
                 self.error = None;
             }
             Err(err) => {
                 self.shortcuts = Vec::new();
+                self.variables = Vec::new();
                 self.error = Some(format!("Couldn't read {}: {err}", self.source_path.display()));
             }
         }
@@ -150,13 +161,36 @@ impl App {
         self.edit_cursor = buffer.chars().count();
         self.edit_buffer = buffer;
         self.editing_line = Some(line);
+        self.resume_line = Some(line);
         self.mode = mode;
+    }
+
+    /// Start editing the value of the `$mainMod` variable. Not tied to the current row selection
+    /// (it's a config-wide setting, not a per-shortcut one), but the selected shortcut, if any,
+    /// is remembered so it stays selected after the save reloads the list.
+    pub fn start_edit_main_mod(&mut self) {
+        let Some(var) = self.variables.iter().find(|v| v.name == "mainMod") else {
+            self.status = Some("No $mainMod variable found in the config.".to_string());
+            return;
+        };
+        let (value, line) = (var.value.clone(), var.line);
+
+        let current_idx = self.table_state.selected();
+        let resume_line = current_idx.and_then(|idx| self.visible().get(idx).map(|s| s.line));
+
+        self.status = None;
+        self.edit_cursor = value.chars().count();
+        self.edit_buffer = value;
+        self.editing_line = Some(line);
+        self.resume_line = resume_line;
+        self.mode = Mode::EditMainMod;
     }
 
     pub fn cancel_edit(&mut self) {
         self.edit_buffer.clear();
         self.edit_cursor = 0;
         self.editing_line = None;
+        self.resume_line = None;
         self.mode = Mode::Normal;
     }
 
@@ -225,43 +259,47 @@ impl App {
         let Some(line_no) = self.editing_line else {
             return;
         };
-        let shortcut = self.shortcuts.iter().find(|s| s.line == line_no);
-        let new_line = match (self.mode, shortcut) {
-            (Mode::EditKey, Some(shortcut)) => {
+
+        let new_line = match self.mode {
+            Mode::EditKey => self.shortcuts.iter().find(|s| s.line == line_no).map(|shortcut| {
                 let (mods_raw, key_raw) = match self.edit_buffer.split_once(',') {
                     Some((mods, key)) => (mods.trim(), key.trim()),
                     None => ("", self.edit_buffer.trim()),
                 };
-                Some(shortcut.with_key(mods_raw, key_raw))
-            }
-            (Mode::EditTarget, Some(shortcut)) => {
+                shortcut.with_key(mods_raw, key_raw)
+            }),
+            Mode::EditTarget => self.shortcuts.iter().find(|s| s.line == line_no).map(|shortcut| {
                 let (dispatcher_raw, args_raw) = match self.edit_buffer.split_once(',') {
                     Some((dispatcher, args)) => (dispatcher.trim(), args.trim()),
                     None => (self.edit_buffer.trim(), ""),
                 };
-                Some(shortcut.with_target(dispatcher_raw, args_raw))
-            }
-            _ => None,
+                shortcut.with_target(dispatcher_raw, args_raw)
+            }),
+            Mode::EditMainMod => self.variables.iter().find(|v| v.line == line_no).map(|variable| {
+                format!("${} = {}", variable.name, self.edit_buffer.trim())
+            }),
+            Mode::Normal | Mode::Search => None,
         };
 
         match new_line {
             Some(new_line) => match write_line(&self.source_path, line_no, &new_line) {
                 Ok(()) => {
                     self.status = Some("Saved.".to_string());
-                    self.reload_and_reselect(line_no);
+                    self.reload_and_reselect(self.resume_line.unwrap_or(line_no));
                 }
                 Err(err) => {
                     self.status = Some(format!("Failed to save: {err}"));
                 }
             },
             None => {
-                self.status = Some("Couldn't save: shortcut no longer found.".to_string());
+                self.status = Some("Couldn't save: not found in the current file.".to_string());
             }
         }
 
         self.edit_buffer.clear();
         self.edit_cursor = 0;
         self.editing_line = None;
+        self.resume_line = None;
         self.mode = Mode::Normal;
     }
 
@@ -359,6 +397,7 @@ mod tests {
         App {
             source_path: PathBuf::from("/dev/null"),
             shortcuts: Vec::new(),
+            variables: Vec::new(),
             table_state: TableState::default(),
             error: None,
             query: String::new(),
@@ -366,6 +405,7 @@ mod tests {
             edit_buffer: String::new(),
             edit_cursor: 0,
             editing_line: None,
+            resume_line: None,
             status: None,
         }
     }

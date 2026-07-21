@@ -1,3 +1,13 @@
+/// A `$VAR = value` definition line, e.g. `$mainMod = SUPER`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Variable {
+    /// Without the leading `$`, e.g. "mainMod".
+    pub name: String,
+    pub value: String,
+    /// 1-based line number in the source file, used to write an edited value back in place.
+    pub line: usize,
+}
+
 /// A single parsed keybinding line, e.g. `bind = $mainMod, Q, killactive # Kill active window`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shortcut {

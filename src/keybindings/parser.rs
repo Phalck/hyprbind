@@ -3,10 +3,18 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use super::model::Shortcut;
+use super::model::{Shortcut, Variable};
 
-/// Parse a Hyprland keybindings `.conf` file (e.g. `default.conf`) into a list of shortcuts.
-pub fn parse_file(path: impl AsRef<Path>) -> io::Result<Vec<Shortcut>> {
+/// The result of parsing a Hyprland keybindings `.conf` file: its shortcuts plus the `$VAR`
+/// definitions used to resolve them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParsedConfig {
+    pub shortcuts: Vec<Shortcut>,
+    pub variables: Vec<Variable>,
+}
+
+/// Parse a Hyprland keybindings `.conf` file (e.g. `default.conf`).
+pub fn parse_file(path: impl AsRef<Path>) -> io::Result<ParsedConfig> {
     let contents = fs::read_to_string(path)?;
     Ok(parse_str(&contents))
 }
@@ -16,8 +24,9 @@ pub fn parse_file(path: impl AsRef<Path>) -> io::Result<Vec<Shortcut>> {
 /// Handles `$VAR = value` substitution and the `bind`/`bindd`/`binde`/`bindm`/`bindle`/...
 /// directive family. Full-line comments and blank lines are skipped. Does not understand the
 /// Lua keybinding format (`default.lua`).
-pub fn parse_str(contents: &str) -> Vec<Shortcut> {
+pub fn parse_str(contents: &str) -> ParsedConfig {
     let mut vars: HashMap<String, String> = HashMap::new();
+    let mut variables = Vec::new();
     let mut shortcuts = Vec::new();
 
     for (idx, raw_line) in contents.lines().enumerate() {
@@ -30,7 +39,10 @@ pub fn parse_str(contents: &str) -> Vec<Shortcut> {
 
         if let Some(rest) = line.strip_prefix('$') {
             if let Some((name, value)) = rest.split_once('=') {
-                vars.insert(format!("${}", name.trim()), value.trim().to_string());
+                let name = name.trim().to_string();
+                let value = value.trim().to_string();
+                vars.insert(format!("${name}"), value.clone());
+                variables.push(Variable { name, value, line: line_no });
             }
             continue;
         }
@@ -40,7 +52,7 @@ pub fn parse_str(contents: &str) -> Vec<Shortcut> {
         }
     }
 
-    shortcuts
+    ParsedConfig { shortcuts, variables }
 }
 
 fn parse_bind_line(
@@ -130,7 +142,7 @@ mod tests {
     #[test]
     fn parses_simple_bind() {
         let input = "$mainMod = SUPER\nbind = $mainMod, Q, killactive # Kill active window\n";
-        let shortcuts = parse_str(input);
+        let shortcuts = parse_str(input).shortcuts;
         assert_eq!(shortcuts.len(), 1);
         let s = &shortcuts[0];
         assert_eq!(s.bind_type, "bind");
@@ -145,7 +157,7 @@ mod tests {
     fn parses_exec_with_args_and_resolves_vars() {
         let input =
             "$mainMod = SUPER\n$HYPRSCRIPTS = ~/.config/hypr/scripts\nbind = $mainMod SHIFT, A, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations\n";
-        let shortcuts = parse_str(input);
+        let shortcuts = parse_str(input).shortcuts;
         assert_eq!(shortcuts.len(), 1);
         let s = &shortcuts[0];
         assert_eq!(s.mods, vec!["SUPER", "SHIFT"]);
@@ -156,7 +168,7 @@ mod tests {
     #[test]
     fn parses_bindd_with_description() {
         let input = "$mainMod = SUPER\nbindd = $mainMod SHIFT, T, Float all windows, exec, ~/.config/ml4w/scripts/ml4w-toggle-allfloat\n";
-        let shortcuts = parse_str(input);
+        let shortcuts = parse_str(input).shortcuts;
         assert_eq!(shortcuts.len(), 1);
         let s = &shortcuts[0];
         assert_eq!(s.bind_type, "bindd");
@@ -167,7 +179,7 @@ mod tests {
     #[test]
     fn parses_fn_key_with_no_mods() {
         let input = "bind = , XF86AudioMute, exec, pactl set-sink-mute @DEFAULT_SINK@ toggle # Toggle mute\n";
-        let shortcuts = parse_str(input);
+        let shortcuts = parse_str(input).shortcuts;
         assert_eq!(shortcuts.len(), 1);
         assert!(shortcuts[0].mods.is_empty());
         assert_eq!(shortcuts[0].key, "XF86AudioMute");
@@ -176,6 +188,27 @@ mod tests {
     #[test]
     fn skips_comments_and_blank_lines() {
         let input = "# just a comment\n\n   \n# another\n";
-        assert!(parse_str(input).is_empty());
+        assert!(parse_str(input).shortcuts.is_empty());
+    }
+
+    #[test]
+    fn captures_variable_definitions_with_line_numbers() {
+        let input = "$mainMod = SUPER\n$HYPRSCRIPTS = ~/.config/hypr/scripts\nbind = $mainMod, Q, killactive\n";
+        let variables = parse_str(input).variables;
+        assert_eq!(
+            variables,
+            vec![
+                Variable {
+                    name: "mainMod".to_string(),
+                    value: "SUPER".to_string(),
+                    line: 1,
+                },
+                Variable {
+                    name: "HYPRSCRIPTS".to_string(),
+                    value: "~/.config/hypr/scripts".to_string(),
+                    line: 2,
+                },
+            ]
+        );
     }
 }

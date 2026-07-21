@@ -51,6 +51,7 @@ cargo run
 | `/` | Start or edit a search |
 | `e` | Edit the selected shortcut's key |
 | `t` | Edit the selected shortcut's target (dispatcher and arguments) |
+| `E` | Edit the `$mainMod` variable's value |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from.
@@ -115,6 +116,17 @@ save, the table reloads from disk and the row you edited stays selected.
 Because this edits the file Hyprland reads its keybindings from, keep that
 dotfiles path under version control (as ML4W setups normally are) so you can
 diff or revert a change you don't want.
+
+### Editing `$mainMod`
+
+Almost every shortcut references `$mainMod` rather than a literal modifier
+key, so changing it once (e.g. from `SUPER` to `SUPER ALT`) re-points the
+whole binding set. Press `E` from anywhere in the list (no row needs to be
+selected) to edit its value, using the same text field and keys as above.
+Saving rewrites the `$mainMod = ...` definition line; every shortcut that
+references it picks up the new value on the next reload without any of their
+own lines being touched. Whatever shortcut you had selected stays selected
+afterward.
 
 ## Development
 

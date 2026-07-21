@@ -9,7 +9,7 @@ use crate::app::{App, Mode};
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let footer_height = match app.mode {
-        Mode::EditKey | Mode::EditTarget => 2,
+        Mode::EditKey | Mode::EditTarget | Mode::EditMainMod => 2,
         Mode::Normal | Mode::Search => 1,
     };
     let chunks = Layout::vertical([
@@ -106,6 +106,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = match app.mode {
         Mode::EditKey => edit_footer_lines("key", app),
         Mode::EditTarget => edit_footer_lines("target", app),
+        Mode::EditMainMod => edit_footer_lines("$mainMod", app),
         Mode::Search => vec![Line::from(format!(
             "/{}▏   Enter apply   Esc cancel",
             app.query
@@ -117,11 +118,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
                 Line::from(
-                    "/ search   e edit key   t edit target   ↑/k ↓/j move   g/G top/bottom   q quit",
+                    "/ search   e edit key   t edit target   E edit $mainMod   ↑/k ↓/j move   g/G top/bottom   q quit",
                 )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e edit key   t edit target   ↑/k ↓/j move   g/G top/bottom   q quit",
+                    "filter: \"{}\"   / change filter   e edit key   t edit target   E edit $mainMod   ↑/k ↓/j move   g/G top/bottom   q quit",
                     app.query
                 ))
             };
