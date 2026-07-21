@@ -11,12 +11,35 @@ use crate::fs_util::write_atomic;
 use crate::keybindings::{self, Shortcut, Variable};
 
 const TEMPLATE_EXTENSION: &str = "hbt";
+const BACKUP_EXTENSION: &str = "hbb";
 /// How long a status message stays in the footer before it's cleared automatically, so the
 /// normal key-hint menu comes back without the user having to do anything.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+}
+
+/// A local-time, filename-safe timestamp like `20260721-153045`, via the system `date` command
+/// (no calendar-math or timezone handling of our own, and no dependency: `date` is standard on
+/// every Linux system this app targets). Falls back to raw Unix-epoch seconds if `date` can't be
+/// run for some reason, which is still unique and sortable, just less human-readable.
+fn timestamp_string() -> String {
+    std::process::Command::new("date")
+        .arg("+%Y%m%d-%H%M%S")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "0".to_string())
+        })
 }
 
 /// Where the active Hyprland keybinding set lives, per the ML4W dotfiles layout.
@@ -57,6 +80,12 @@ pub enum Mode {
     TemplateList,
     /// Picking which shortcuts from a loaded template to apply.
     TemplatePreview,
+    /// Editing the backup save/restore folder.
+    BackupFolder,
+    /// Picking which `.hbb` file to restore.
+    BackupList,
+    /// Confirming a restore before it overwrites the keybindings file.
+    BackupConfirm,
 }
 
 pub struct App {
@@ -95,6 +124,14 @@ pub struct App {
     /// File name of the template currently being previewed, for display purposes.
     pub template_source_name: Option<String>,
 
+    /// Folder backups are saved to and restored from. Defaults to `$HOME`.
+    pub backup_folder: PathBuf,
+    /// `.hbb` files found in `backup_folder`, shown by `Mode::BackupList`.
+    pub backup_files: Vec<PathBuf>,
+    pub backup_table_state: TableState,
+    /// The backup picked in `Mode::BackupList`, awaiting confirmation in `Mode::BackupConfirm`.
+    pub backup_selected_path: Option<PathBuf>,
+
     /// Where persisted settings are read from and written to. An explicit field (rather than
     /// always calling `config::config_path()` directly) so tests can point it at a scratch path
     /// instead of the real `~/.config/hyprbind/config`.
@@ -125,6 +162,10 @@ impl App {
             template_table_state: TableState::default(),
             template_files: Vec::new(),
             template_source_name: None,
+            backup_folder: settings.backup_folder.clone().unwrap_or_else(home_dir),
+            backup_files: Vec::new(),
+            backup_table_state: TableState::default(),
+            backup_selected_path: None,
             config_path,
         };
         app.load();
@@ -215,14 +256,16 @@ impl App {
         self.status_set_at = None;
     }
 
-    /// Write the current `source_path` and `template_folder` to `self.config_path`, so they're
-    /// picked up again on the next launch instead of resetting to the hardcoded defaults.
-    /// Best-effort: callers decide how (or whether) to surface a failure, since losing
-    /// persistence is much less serious than losing the change it's persisting.
+    /// Write the current `source_path`, `template_folder`, and `backup_folder` to
+    /// `self.config_path`, so they're picked up again on the next launch instead of resetting to
+    /// the hardcoded defaults. Best-effort: callers decide how (or whether) to surface a
+    /// failure, since losing persistence is much less serious than losing the change it's
+    /// persisting.
     fn persist_settings(&self) -> io::Result<()> {
         let settings = Settings {
             source_path: Some(self.source_path.clone()),
             template_folder: Some(self.template_folder.clone()),
+            backup_folder: Some(self.backup_folder.clone()),
         };
         config::save_to(&self.config_path, &settings)
     }
@@ -621,7 +664,7 @@ impl App {
 
     pub fn start_template_list(&mut self) {
         self.clear_status();
-        self.template_files = list_template_files(&self.template_folder);
+        self.template_files = list_files_with_extension(&self.template_folder, TEMPLATE_EXTENSION);
         self.template_table_state = TableState::default();
         if !self.template_files.is_empty() {
             self.template_table_state.select_first();
@@ -736,6 +779,154 @@ impl App {
         self.edit_cursor = 0;
         self.mode = Mode::Normal;
     }
+
+    // ---- Backup folder ----------------------------------------------------------------
+
+    pub fn start_edit_backup_folder(&mut self) {
+        self.clear_status();
+        self.edit_buffer = self.backup_folder.display().to_string();
+        self.edit_cursor = self.edit_buffer.chars().count();
+        self.mode = Mode::BackupFolder;
+    }
+
+    pub fn save_backup_folder(&mut self) {
+        let input = self.edit_buffer.trim();
+        if input.is_empty() {
+            self.set_status("Backup folder can't be empty.".to_string());
+            return;
+        }
+        let expanded = expand_home(input);
+        match fs::create_dir_all(&expanded) {
+            Ok(()) => {
+                self.backup_folder = expanded.clone();
+                let saved = self.persist_settings().is_ok();
+                self.set_status(format!(
+                    "Backup folder set to {}{}",
+                    expanded.display(),
+                    if saved { " (saved)." } else { "." }
+                ));
+            }
+            Err(err) => {
+                self.set_status(format!("Couldn't use {}: {err}", expanded.display()));
+            }
+        }
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::Normal;
+    }
+
+    // ---- Backup -------------------------------------------------------------------------
+
+    /// Copy the current keybindings file, byte-for-byte, into a new timestamped file in the
+    /// backup folder. A plain copy rather than anything routed through the parser: a backup
+    /// exists to put the file back exactly as it was, so it needs to preserve everything —
+    /// comments, `$VAR` definitions, exact formatting — not just the shortcuts we understand.
+    pub fn create_backup(&mut self) {
+        if let Err(err) = fs::create_dir_all(&self.backup_folder) {
+            self.set_status(format!("Couldn't use {}: {err}", self.backup_folder.display()));
+            return;
+        }
+
+        let stem = self
+            .source_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("hyprbind");
+        let path = self
+            .backup_folder
+            .join(format!("{stem}-{}.{BACKUP_EXTENSION}", timestamp_string()));
+
+        match fs::copy(&self.source_path, &path) {
+            Ok(_) => self.set_status(format!("Backed up to {}.", path.display())),
+            Err(err) => {
+                self.set_status(format!("Backup failed: couldn't read {}: {err}", self.source_path.display()));
+            }
+        }
+    }
+
+    // ---- Restore from backup ------------------------------------------------------------
+
+    pub fn start_backup_list(&mut self) {
+        self.clear_status();
+        self.backup_files = list_files_with_extension(&self.backup_folder, BACKUP_EXTENSION);
+        self.backup_table_state = TableState::default();
+        if !self.backup_files.is_empty() {
+            self.backup_table_state.select_first();
+        }
+        self.mode = Mode::BackupList;
+    }
+
+    pub fn backup_list_select_next(&mut self) {
+        if !self.backup_files.is_empty() {
+            self.backup_table_state.select_next();
+        }
+    }
+
+    pub fn backup_list_select_previous(&mut self) {
+        if !self.backup_files.is_empty() {
+            self.backup_table_state.select_previous();
+        }
+    }
+
+    /// Move from the backup list to the restore confirmation step, without touching anything
+    /// yet — restoring overwrites the whole keybindings file, so it's the one destructive action
+    /// in the app that gets a dedicated "are you sure" step rather than committing immediately.
+    pub fn confirm_backup_selection(&mut self) {
+        let Some(idx) = self.backup_table_state.selected() else {
+            return;
+        };
+        let Some(path) = self.backup_files.get(idx).cloned() else {
+            return;
+        };
+        self.backup_selected_path = Some(path);
+        self.mode = Mode::BackupConfirm;
+    }
+
+    /// Abandon the restore flow (from either the list or the confirmation step) and return to
+    /// normal browsing without changing anything.
+    pub fn cancel_backup_restore(&mut self) {
+        self.backup_files.clear();
+        self.backup_table_state = TableState::default();
+        self.backup_selected_path = None;
+        self.mode = Mode::Normal;
+    }
+
+    /// Overwrite `source_path` with the selected backup's exact contents.
+    pub fn restore_backup(&mut self) {
+        let Some(path) = self.backup_selected_path.clone() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+
+        match fs::read_to_string(&path) {
+            Ok(contents) => match write_atomic(&self.source_path, &contents) {
+                Ok(()) => {
+                    self.set_status(format!(
+                        "Restored {} from {}.",
+                        self.source_path.display(),
+                        path.display()
+                    ));
+                    self.load();
+                    if self.shortcuts.is_empty() {
+                        self.table_state.select(None);
+                    } else {
+                        self.table_state.select_first();
+                    }
+                }
+                Err(err) => {
+                    self.set_status(format!("Restore failed: {err}"));
+                }
+            },
+            Err(err) => {
+                self.set_status(format!("Couldn't read {}: {err}", path.display()));
+            }
+        }
+
+        self.backup_files.clear();
+        self.backup_table_state = TableState::default();
+        self.backup_selected_path = None;
+        self.mode = Mode::Normal;
+    }
 }
 
 /// Replace line `line_no` (1-based) of `contents` with `new_line`, preserving every other line
@@ -799,16 +990,16 @@ fn write_template(folder: &Path, path: &Path, lines: &[String]) -> io::Result<()
     write_atomic(path, &contents)
 }
 
-/// List `.hbt` files directly inside `folder`, sorted by name. Returns an empty list if the
-/// folder doesn't exist or can't be read, rather than failing.
-fn list_template_files(folder: &Path) -> Vec<PathBuf> {
+/// List files directly inside `folder` whose extension matches `extension`, sorted by name.
+/// Returns an empty list if the folder doesn't exist or can't be read, rather than failing.
+fn list_files_with_extension(folder: &Path, extension: &str) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(folder) else {
         return Vec::new();
     };
     let mut files: Vec<PathBuf> = entries
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(TEMPLATE_EXTENSION))
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(extension))
         .collect();
     files.sort();
     files
@@ -868,6 +1059,10 @@ mod tests {
             template_table_state: TableState::default(),
             template_files: Vec::new(),
             template_source_name: None,
+            backup_folder: PathBuf::from("/dev/null"),
+            backup_files: Vec::new(),
+            backup_table_state: TableState::default(),
+            backup_selected_path: None,
             // Guaranteed to fail (/dev/null isn't a directory, so create_dir_all on any path
             // under it errors out) so a stray persist_settings() call in a test can never write
             // to a real location, let alone the user's actual ~/.config/hyprbind/config.
@@ -1096,6 +1291,138 @@ mod tests {
         fs::remove_file(&config_file).unwrap();
     }
 
+    #[test]
+    fn timestamp_string_is_well_formed() {
+        let ts = timestamp_string();
+        // Either "YYYYMMDD-HHMMSS" (15 chars) from `date`, or raw epoch seconds as a fallback.
+        // Either way it should be non-empty and made up only of digits and a possible dash.
+        assert!(!ts.is_empty());
+        assert!(ts.chars().all(|c| c.is_ascii_digit() || c == '-'));
+    }
+
+    #[test]
+    fn create_backup_copies_the_source_file_byte_for_byte() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-source-{}.conf", std::process::id()));
+        let backup_dir = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-dir-{}", std::process::id()));
+        let contents = "$mainMod = SUPER\n# a comment\nbind = $mainMod, Q, killactive\n";
+        fs::write(&source, contents).unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.backup_folder = backup_dir.clone();
+        app.create_backup();
+
+        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Backed up to ")));
+
+        let entries: Vec<_> = fs::read_dir(&backup_dir).unwrap().filter_map(|e| e.ok()).collect();
+        assert_eq!(entries.len(), 1, "exactly one backup file should have been created");
+        let backup_path = entries[0].path();
+        assert_eq!(backup_path.extension().and_then(|e| e.to_str()), Some(BACKUP_EXTENSION));
+        assert_eq!(fs::read_to_string(&backup_path).unwrap(), contents);
+
+        fs::remove_file(&source).unwrap();
+        fs::remove_dir_all(&backup_dir).unwrap();
+    }
+
+    #[test]
+    fn create_backup_reports_failure_when_source_is_unreadable() {
+        let missing = std::env::temp_dir().join("hyprbind-test-backup-missing-hopefully.conf");
+        let backup_dir = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-dir-missing-{}", std::process::id()));
+
+        let mut app = edit_app();
+        app.source_path = missing;
+        app.backup_folder = backup_dir.clone();
+        app.create_backup();
+
+        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Backup failed")));
+
+        fs::remove_dir_all(&backup_dir).unwrap();
+    }
+
+    #[test]
+    fn confirm_backup_selection_moves_to_confirm_mode() {
+        let mut app = edit_app();
+        app.mode = Mode::BackupList;
+        app.backup_files = vec![PathBuf::from("/a/one.hbb"), PathBuf::from("/a/two.hbb")];
+        app.backup_table_state.select(Some(1));
+
+        app.confirm_backup_selection();
+
+        assert_eq!(app.mode, Mode::BackupConfirm);
+        assert_eq!(app.backup_selected_path, Some(PathBuf::from("/a/two.hbb")));
+    }
+
+    #[test]
+    fn restore_backup_overwrites_source_with_backup_contents_and_reloads() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-restore-source-{}.conf", std::process::id()));
+        let backup = std::env::temp_dir()
+            .join(format!("hyprbind-test-restore-backup-{}.hbb", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, killactive\n").unwrap();
+        let backup_contents = "bind = SUPER, W, exec, foo\nbind = SUPER, E, exec, bar\n";
+        fs::write(&backup, backup_contents).unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.backup_selected_path = Some(backup.clone());
+        app.mode = Mode::BackupConfirm;
+
+        app.restore_backup();
+
+        assert_eq!(fs::read_to_string(&source).unwrap(), backup_contents);
+        assert_eq!(app.shortcuts.len(), 2);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.backup_selected_path.is_none());
+        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Restored ")));
+
+        fs::remove_file(&source).unwrap();
+        fs::remove_file(&backup).unwrap();
+    }
+
+    #[test]
+    fn restore_backup_reports_failure_when_backup_is_unreadable() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-restore-bad-source-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, killactive\n").unwrap();
+        let missing_backup =
+            std::env::temp_dir().join("hyprbind-test-restore-missing-backup-hopefully.hbb");
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.backup_selected_path = Some(missing_backup);
+        app.mode = Mode::BackupConfirm;
+
+        app.restore_backup();
+
+        assert_eq!(fs::read_to_string(&source).unwrap(), "bind = SUPER, Q, killactive\n");
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("Couldn't read")));
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_backup_folder_persists_to_config_path() {
+        let folder = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-folder-persist-{}", std::process::id()));
+        let config_file = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-folder-persist-config-{}", std::process::id()));
+
+        let mut app = edit_app();
+        app.config_path = config_file.clone();
+        app.edit_buffer = folder.display().to_string();
+        app.save_backup_folder();
+
+        let saved = fs::read_to_string(&config_file).unwrap();
+        assert!(saved.contains(&format!("backup_folder = {}", folder.display())));
+
+        fs::remove_dir_all(&folder).unwrap();
+        fs::remove_file(&config_file).unwrap();
+    }
+
     fn sample_shortcut(line: usize, key: &str) -> Shortcut {
         Shortcut {
             bind_type: "bind".to_string(),
@@ -1148,22 +1475,29 @@ mod tests {
     }
 
     #[test]
-    fn list_template_files_filters_by_extension_and_sorts() {
+    fn list_files_with_extension_filters_and_sorts() {
         let dir = std::env::temp_dir().join(format!("hyprbind-test-list-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("b.hbt"), "").unwrap();
         fs::write(dir.join("a.hbt"), "").unwrap();
         fs::write(dir.join("notes.txt"), "").unwrap();
+        fs::write(dir.join("c.hbb"), "").unwrap();
 
-        let files = list_template_files(&dir);
-        assert_eq!(files, vec![dir.join("a.hbt"), dir.join("b.hbt")]);
+        assert_eq!(
+            list_files_with_extension(&dir, TEMPLATE_EXTENSION),
+            vec![dir.join("a.hbt"), dir.join("b.hbt")]
+        );
+        assert_eq!(
+            list_files_with_extension(&dir, BACKUP_EXTENSION),
+            vec![dir.join("c.hbb")]
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn list_template_files_on_missing_folder_returns_empty() {
+    fn list_files_with_extension_on_missing_folder_returns_empty() {
         let missing = std::env::temp_dir().join("hyprbind-does-not-exist-hopefully");
-        assert!(list_template_files(&missing).is_empty());
+        assert!(list_files_with_extension(&missing, TEMPLATE_EXTENSION).is_empty());
     }
 }

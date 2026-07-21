@@ -14,12 +14,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         | Mode::EditMainMod
         | Mode::SourcePath
         | Mode::TemplateFolder
-        | Mode::TemplateSaveName => 2,
+        | Mode::TemplateSaveName
+        | Mode::BackupFolder => 2,
         Mode::Normal
         | Mode::Search
         | Mode::TemplateSaveSelect
         | Mode::TemplateList
-        | Mode::TemplatePreview => 1,
+        | Mode::TemplatePreview
+        | Mode::BackupList
+        | Mode::BackupConfirm => 1,
     };
     let chunks = Layout::vertical([
         Constraint::Length(4),
@@ -33,6 +36,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.mode {
         Mode::TemplateSaveSelect | Mode::TemplatePreview => draw_template_picker(frame, app, chunks[1]),
         Mode::TemplateList => draw_template_list(frame, app, chunks[1]),
+        Mode::BackupList => draw_backup_list(frame, app, chunks[1]),
+        Mode::BackupConfirm => draw_backup_confirm(frame, app, chunks[1]),
         _ => {
             let visible_len = app.visible().len();
             if app.shortcuts.is_empty() {
@@ -124,6 +129,15 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
         Mode::TemplatePreview => (
             "Apply template",
             "Space to toggle, Enter applies the checked shortcuts",
+        ),
+        Mode::BackupFolder => (
+            "Backup folder",
+            "set where backups are saved to and restored from",
+        ),
+        Mode::BackupList => ("Restore backup", "pick a .hbb file to restore"),
+        Mode::BackupConfirm => (
+            "Confirm restore",
+            "overwrite the current keybindings file with this backup",
         ),
     }
 }
@@ -272,6 +286,60 @@ fn draw_template_list(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(table, area, &mut app.template_table_state);
 }
 
+fn draw_backup_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.backup_files.is_empty() {
+        draw_message(
+            frame,
+            area,
+            &format!("No .hbb backups found in {}.", app.backup_folder.display()),
+        );
+        return;
+    }
+
+    let rows: Vec<Row> = app
+        .backup_files
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            Row::new(vec![Cell::from(name)])
+        })
+        .collect();
+
+    let widths = [Constraint::Percentage(100)];
+    let title = format!("Backups in {}", app.backup_folder.display());
+
+    let table = Table::new(rows, widths)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("› ");
+
+    frame.render_stateful_widget(table, area, &mut app.backup_table_state);
+}
+
+fn draw_backup_confirm(frame: &mut Frame, app: &App, area: Rect) {
+    let name = app
+        .backup_selected_path
+        .as_ref()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let message = format!(
+        "Restore {name} over {}?\n\n\
+         This overwrites your current keybindings file with the backup's contents.\n\
+         Enter to confirm, Esc to cancel.",
+        app.source_path.display()
+    );
+
+    let body = Paragraph::new(message)
+        .style(Style::default().fg(Color::Yellow))
+        .block(Block::default().borders(Borders::ALL).title("Confirm restore"));
+    frame.render_widget(body, area);
+}
+
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = match app.mode {
         Mode::EditKey => edit_footer_lines("key", app),
@@ -287,6 +355,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::TemplatePreview => vec![Line::from(
             "Space toggle   Enter apply   Esc cancel   ↑/k ↓/j move",
         )],
+        Mode::BackupFolder => edit_footer_lines("backup folder", app),
+        Mode::BackupList => vec![Line::from("Enter select   Esc cancel   ↑/k ↓/j move")],
+        Mode::BackupConfirm => vec![Line::from("Enter restore   Esc cancel")],
         Mode::Search => vec![Line::from(format!(
             "/{}▏   Enter apply   Esc cancel",
             app.query
@@ -298,11 +369,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
                 Line::from(
-                    "/ search   e edit key   a edit target   E edit $mainMod   t save template   l load template   T template folder   S keybindings file   ↑/k ↓/j move   q quit",
+                    "/ search   e edit key   a edit target   E edit $mainMod   t save template   l load template   T template folder   S keybindings file   b backup   r restore   B backup folder   ↑/k ↓/j move   q quit",
                 )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   t/l templates   S file   ↑/k ↓/j move   q quit",
+                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   t/l templates   S file   b/r/B backup   ↑/k ↓/j move   q quit",
                     app.query
                 ))
             };

@@ -64,6 +64,9 @@ cargo run
 | `l` | Load a template |
 | `T` | Set the template folder |
 | `S` | Set the keybindings file path |
+| `b` | Back up the current keybindings file |
+| `r` | Restore from a backup |
+| `B` | Set the backup folder |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from,
@@ -179,14 +182,35 @@ no way back.
 
 ### Persisted settings
 
-The keybindings file path and the template folder both persist across runs,
-in `~/.config/hyprbind/config` — a plain `key = value` text file, not a
-structured format like TOML, since there are only two settings to store.
-Every time either is changed successfully (`S` or `T`), it's written there
-immediately, and the status line's confirmation gets a `(saved)` suffix to
-confirm it. There's no separate command to edit this file's own location or
-turn persistence off; delete it (or a line from it) to reset that setting
-back to the automatic behavior described above.
+The keybindings file path, the template folder, and the backup folder all
+persist across runs, in `~/.config/hyprbind/config` — a plain `key = value`
+text file, not a structured format like TOML, since there are only three
+settings to store. Every time one is changed successfully (`S`, `T`, or `B`),
+it's written there immediately, and the status line's confirmation gets a
+`(saved)` suffix to confirm it. There's no separate command to edit this
+file's own location or turn persistence off; delete it (or a line from it) to
+reset that setting back to the automatic behavior described above.
+
+### Backups
+
+A backup is a `.hbb` ("hyprbind backup") file: an exact byte-for-byte copy of
+the current keybindings file, made with `b`. Unlike templates, nothing is
+parsed or resolved — every comment, `$VAR` definition, and bit of formatting
+is preserved, because the point of a backup is to be able to put the file
+back exactly as it was. Backups are named `<original filename>-<timestamp>.hbb`
+and stored in a folder that defaults to `$HOME`; change it with `B` (same
+text field as the other settings above, `~` expanded).
+
+Restoring (`r`) is the one destructive action in hyprbind — it overwrites the
+whole keybindings file — so it's the only command with an extra confirmation
+step instead of committing immediately:
+
+1. `r` lists every `.hbb` file in the backup folder.
+2. Pick one and press Enter to see a confirmation screen naming the backup
+   and the file it would overwrite.
+3. Enter there restores it (atomically, so a failure partway through can't
+   leave the file half-written) and reloads the table; Esc at either step
+   cancels without changing anything.
 
 ### Templates
 
@@ -239,9 +263,11 @@ Run the test suite, which covers the keybinding parser against representative
 `bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
 keys with no modifiers, search matching, the line-splicing logic used to
 write an edit back to the file, template save/list/append helpers, the
-keybindings-file auto-detection scan (including symlink-cycle safety), and
-the persisted-settings file (parsing, round-tripping, and the app-level
-integration that writes it on a successful `S`/`T`):
+keybindings-file auto-detection scan (including symlink-cycle safety), the
+persisted-settings file (parsing, round-tripping, and the app-level
+integration that writes it on a successful `S`/`T`/`B`), and backup/restore
+(byte-for-byte copy on backup, atomic overwrite plus reload on restore, and
+failure handling for both):
 
 ```sh
 cargo test

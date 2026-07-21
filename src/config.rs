@@ -11,6 +11,7 @@ use crate::fs_util::write_atomic;
 pub struct Settings {
     pub source_path: Option<PathBuf>,
     pub template_folder: Option<PathBuf>,
+    pub backup_folder: Option<PathBuf>,
 }
 
 /// `~/.config/hyprbind/config`.
@@ -46,6 +47,7 @@ fn parse(contents: &str) -> Settings {
         match key.trim() {
             "source_path" => settings.source_path = Some(PathBuf::from(value)),
             "template_folder" => settings.template_folder = Some(PathBuf::from(value)),
+            "backup_folder" => settings.backup_folder = Some(PathBuf::from(value)),
             _ => {}
         }
     }
@@ -65,6 +67,9 @@ pub fn save_to(path: &Path, settings: &Settings) -> io::Result<()> {
     if let Some(template_folder) = &settings.template_folder {
         contents.push_str(&format!("template_folder = {}\n", template_folder.display()));
     }
+    if let Some(backup_folder) = &settings.backup_folder {
+        contents.push_str(&format!("backup_folder = {}\n", backup_folder.display()));
+    }
 
     write_atomic(path, &contents)
 }
@@ -78,16 +83,18 @@ mod tests {
     }
 
     #[test]
-    fn parse_reads_both_keys_and_ignores_comments_and_blanks() {
+    fn parse_reads_all_keys_and_ignores_comments_and_blanks() {
         let contents = "\
 # a comment
 source_path = /home/me/.config/hypr/binds.conf
 
 template_folder = /home/me/Templates
+backup_folder = /home/me/Backups
 ";
         let settings = parse(contents);
         assert_eq!(settings.source_path, Some(PathBuf::from("/home/me/.config/hypr/binds.conf")));
         assert_eq!(settings.template_folder, Some(PathBuf::from("/home/me/Templates")));
+        assert_eq!(settings.backup_folder, Some(PathBuf::from("/home/me/Backups")));
     }
 
     #[test]
@@ -111,6 +118,7 @@ template_folder = /home/me/Templates
         let settings = Settings {
             source_path: Some(PathBuf::from("/a/b/binds.conf")),
             template_folder: Some(PathBuf::from("/a/b/templates")),
+            backup_folder: Some(PathBuf::from("/a/b/backups")),
         };
 
         save_to(&path, &settings).unwrap();
@@ -126,6 +134,7 @@ template_folder = /home/me/Templates
         let settings = Settings {
             source_path: Some(PathBuf::from("/x")),
             template_folder: None,
+            backup_folder: None,
         };
 
         save_to(&path, &settings).unwrap();
@@ -142,6 +151,7 @@ template_folder = /home/me/Templates
         let settings = Settings {
             source_path: Some(PathBuf::from("/only/source")),
             template_folder: None,
+            backup_folder: None,
         };
 
         save_to(&path, &settings).unwrap();

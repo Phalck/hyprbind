@@ -50,6 +50,9 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('l') => app.start_template_list(),
                     KeyCode::Char('T') => app.start_edit_template_folder(),
                     KeyCode::Char('S') => app.start_edit_source_path(),
+                    KeyCode::Char('b') => app.create_backup(),
+                    KeyCode::Char('r') => app.start_backup_list(),
+                    KeyCode::Char('B') => app.start_edit_backup_folder(),
                     _ => {}
                 },
                 Mode::Search => match key.code {
@@ -150,6 +153,34 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Up | KeyCode::Char('k') => app.template_list_select_previous(),
                     KeyCode::Enter => app.open_selected_template(),
                     KeyCode::Esc => app.cancel_template(),
+                    _ => {}
+                },
+                Mode::BackupFolder => match key.code {
+                    KeyCode::Enter => app.save_backup_folder(),
+                    KeyCode::Esc => app.cancel_edit(),
+                    KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        app.push_edit_char(c);
+                    }
+                    _ => {}
+                },
+                Mode::BackupList => match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => app.backup_list_select_next(),
+                    KeyCode::Up | KeyCode::Char('k') => app.backup_list_select_previous(),
+                    KeyCode::Enter => app.confirm_backup_selection(),
+                    KeyCode::Esc => app.cancel_backup_restore(),
+                    _ => {}
+                },
+                Mode::BackupConfirm => match key.code {
+                    KeyCode::Enter => app.restore_backup(),
+                    KeyCode::Esc => app.cancel_backup_restore(),
                     _ => {}
                 },
             }
