@@ -50,8 +50,11 @@ cargo run
 | `G` | Jump to the last shortcut |
 | `/` | Start or edit a search |
 | `e` | Edit the selected shortcut's key |
-| `t` | Edit the selected shortcut's target (dispatcher and arguments) |
+| `a` | Edit the selected shortcut's target (dispatcher and arguments) |
 | `E` | Edit the `$mainMod` variable's value |
+| `t` | Save shortcuts to a new template |
+| `l` | Load a template |
+| `T` | Set the template folder |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from.
@@ -80,7 +83,7 @@ Editing is split into two scoped commands rather than one free-form line
 editor:
 
 - `e` edits the **key**: the modifiers and key, e.g. `$mainMod SHIFT, Q`.
-- `t` edits the **target**: the dispatcher and its arguments, e.g.
+- `a` edits the **target**: the dispatcher and its arguments, e.g.
   `exec, ~/.config/ml4w/settings/terminal.sh`.
 
 Either opens a text field prefilled with that field exactly as written in the
@@ -128,12 +131,57 @@ references it picks up the new value on the next reload without any of their
 own lines being touched. Whatever shortcut you had selected stays selected
 afterward.
 
+### Templates
+
+A template is a `.hbt` ("hyperbind template") file: a small text file holding
+a chosen subset of shortcuts, written using their *resolved* values (no
+`$VAR` references), so it's portable to a config that doesn't define the same
+variables, or any at all. Templates are stored in a folder that defaults to
+`$HOME`; change it with `T` (opens the same text field as the editing
+commands above, prefilled with the current folder, `~` is expanded).
+
+**Saving (`t`):** opens a checkbox list of the shortcuts currently in view
+(respecting an active search filter, so you can narrow the list down first).
+
+| Key | Action |
+| --- | --- |
+| Up / Down or `j` / `k` | Move the cursor |
+| Space | Toggle the shortcut under the cursor |
+| Enter | Continue to naming the file (at least one must be checked) |
+| Esc | Cancel, discarding the selection |
+
+After checking the shortcuts you want, Enter moves to a text field for the
+template's name (no path separators allowed); Enter there writes
+`<template folder>/<name>.hbt`, Esc abandons the whole save without writing
+anything.
+
+**Loading (`l`):** lists every `.hbt` file in the template folder. Pick one
+and press Enter to see the shortcuts it contains, in the same checkbox list
+as saving — everything starts checked, so pressing Enter immediately applies
+the whole template, or uncheck anything you don't want first.
+
+| Key | Action |
+| --- | --- |
+| Up / Down or `j` / `k` | Move the cursor |
+| Space | Toggle the shortcut under the cursor |
+| Enter | Apply the checked shortcuts |
+| Esc | Cancel without changing anything |
+
+Applying appends the checked shortcuts to the end of the keybindings file,
+after a blank line and a `# Applied from template: <name>.hbt` marker
+comment, so they're easy to find afterward; every existing line is left
+untouched. Before appending, each checked shortcut is checked against your
+current shortcuts by key combo (mods + key, regardless of modifier order) —
+anything already bound is skipped rather than creating a conflicting
+duplicate bind, and the status line reports how many were applied versus
+skipped.
+
 ## Development
 
 Run the test suite, which covers the keybinding parser against representative
 `bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
-keys with no modifiers, search matching, and the line-splicing logic used to
-write an edit back to the file:
+keys with no modifiers, search matching, the line-splicing logic used to
+write an edit back to the file, and template save/list/append helpers:
 
 ```sh
 cargo test

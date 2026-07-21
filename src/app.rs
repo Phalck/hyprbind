@@ -1,16 +1,32 @@
+use std::collections::HashSet;
+use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::widgets::TableState;
 
 use crate::keybindings::{self, Shortcut, Variable};
 
+const TEMPLATE_EXTENSION: &str = "hbt";
+
+fn home_dir() -> PathBuf {
+    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
+}
+
 /// Where the active Hyprland keybinding set lives, per the ML4W dotfiles layout.
 fn default_keybindings_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(
-        ".mydotfiles/com.ml4w.dotfiles/.config/hypr/conf/keybindings/default.conf",
-    )
+    home_dir().join(".mydotfiles/com.ml4w.dotfiles/.config/hypr/conf/keybindings/default.conf")
+}
+
+/// Expand a leading `~` (a bare `~` or `~/...`) against `$HOME`. Any other input is used as-is.
+fn expand_home(input: &str) -> PathBuf {
+    if let Some(rest) = input.strip_prefix("~/") {
+        home_dir().join(rest)
+    } else if input == "~" {
+        home_dir()
+    } else {
+        PathBuf::from(input)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +39,16 @@ pub enum Mode {
     EditTarget,
     /// Editing the value of the `$mainMod` variable.
     EditMainMod,
+    /// Editing the template save/load folder.
+    TemplateFolder,
+    /// Picking which visible shortcuts to save into a new template.
+    TemplateSaveSelect,
+    /// Naming the template file before it's written.
+    TemplateSaveName,
+    /// Picking which `.hbt` file to load.
+    TemplateList,
+    /// Picking which shortcuts from a loaded template to apply.
+    TemplatePreview,
 }
 
 pub struct App {
@@ -44,13 +70,26 @@ pub struct App {
     resume_line: Option<usize>,
     /// Transient message shown in the footer after a save (success or failure).
     pub status: Option<String>,
+
+    /// Folder templates are saved to and loaded from. Defaults to `$HOME`.
+    pub template_folder: PathBuf,
+    /// The shortcuts being offered for pick: either the current view (when saving) or the
+    /// contents of a loaded `.hbt` file (when applying). Shared between both flows since they're
+    /// never active at the same time.
+    pub template_candidates: Vec<Shortcut>,
+    /// `.line` values (within whichever file `template_candidates` came from) that are checked.
+    pub template_selected: HashSet<usize>,
+    pub template_table_state: TableState,
+    /// `.hbt` files found in `template_folder`, shown by `Mode::TemplateList`.
+    pub template_files: Vec<PathBuf>,
+    /// File name of the template currently being previewed, for display purposes.
+    pub template_source_name: Option<String>,
 }
 
 impl App {
     pub fn new() -> Self {
-        let source_path = default_keybindings_path();
         let mut app = Self {
-            source_path,
+            source_path: default_keybindings_path(),
             shortcuts: Vec::new(),
             variables: Vec::new(),
             table_state: TableState::default(),
@@ -62,6 +101,12 @@ impl App {
             editing_line: None,
             resume_line: None,
             status: None,
+            template_folder: home_dir(),
+            template_candidates: Vec::new(),
+            template_selected: HashSet::new(),
+            template_table_state: TableState::default(),
+            template_files: Vec::new(),
+            template_source_name: None,
         };
         app.load();
         if !app.shortcuts.is_empty() {
@@ -278,7 +323,7 @@ impl App {
             Mode::EditMainMod => self.variables.iter().find(|v| v.line == line_no).map(|variable| {
                 format!("${} = {}", variable.name, self.edit_buffer.trim())
             }),
-            Mode::Normal | Mode::Search => None,
+            _ => None,
         };
 
         match new_line {
@@ -326,6 +371,239 @@ impl App {
             self.table_state.select_last();
         }
     }
+
+    // ---- Template folder ----------------------------------------------------------------
+
+    pub fn start_edit_template_folder(&mut self) {
+        self.status = None;
+        self.edit_buffer = self.template_folder.display().to_string();
+        self.edit_cursor = self.edit_buffer.chars().count();
+        self.mode = Mode::TemplateFolder;
+    }
+
+    pub fn save_template_folder(&mut self) {
+        let input = self.edit_buffer.trim();
+        if input.is_empty() {
+            self.status = Some("Template folder can't be empty.".to_string());
+            return;
+        }
+        let expanded = expand_home(input);
+        match fs::create_dir_all(&expanded) {
+            Ok(()) => {
+                self.status = Some(format!("Template folder set to {}.", expanded.display()));
+                self.template_folder = expanded;
+            }
+            Err(err) => {
+                self.status = Some(format!("Couldn't use {}: {err}", expanded.display()));
+            }
+        }
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::Normal;
+    }
+
+    // ---- Save template --------------------------------------------------------------------
+
+    /// Snapshot the currently visible shortcuts and open the save-template picker.
+    pub fn start_template_save_select(&mut self) {
+        self.status = None;
+        self.template_candidates = self.visible().into_iter().cloned().collect();
+        self.template_selected.clear();
+        self.template_table_state = TableState::default();
+        if !self.template_candidates.is_empty() {
+            self.template_table_state.select_first();
+        }
+        self.mode = Mode::TemplateSaveSelect;
+    }
+
+    pub fn template_select_next(&mut self) {
+        if !self.template_candidates.is_empty() {
+            self.template_table_state.select_next();
+        }
+    }
+
+    pub fn template_select_previous(&mut self) {
+        if !self.template_candidates.is_empty() {
+            self.template_table_state.select_previous();
+        }
+    }
+
+    pub fn toggle_template_selection(&mut self) {
+        let Some(idx) = self.template_table_state.selected() else {
+            return;
+        };
+        let Some(line) = self.template_candidates.get(idx).map(|s| s.line) else {
+            return;
+        };
+        if !self.template_selected.insert(line) {
+            self.template_selected.remove(&line);
+        }
+    }
+
+    /// Move from picking rows to naming the file, if at least one row is checked.
+    pub fn confirm_template_save_select(&mut self) {
+        if self.template_selected.is_empty() {
+            self.status = Some("Select at least one shortcut first (Space to toggle).".to_string());
+            return;
+        }
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::TemplateSaveName;
+    }
+
+    /// Write the checked shortcuts (resolved, no `$VAR` references) to
+    /// `<template_folder>/<name>.hbt`.
+    pub fn save_template(&mut self) {
+        let name = self.edit_buffer.trim();
+        if name.is_empty() {
+            self.status = Some("Template name can't be empty.".to_string());
+            return;
+        }
+        if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+            self.status = Some("Template name can't contain a path separator.".to_string());
+            return;
+        }
+
+        let lines: Vec<String> = self
+            .template_candidates
+            .iter()
+            .filter(|s| self.template_selected.contains(&s.line))
+            .map(|s| s.resolved_line())
+            .collect();
+        let count = lines.len();
+
+        let path = self.template_folder.join(format!("{name}.{TEMPLATE_EXTENSION}"));
+        match write_template(&self.template_folder, &path, &lines) {
+            Ok(()) => {
+                self.status = Some(format!("Saved {count} shortcut(s) to {}.", path.display()));
+            }
+            Err(err) => {
+                self.status = Some(format!("Failed to save template: {err}"));
+            }
+        }
+
+        self.cancel_template();
+    }
+
+    // ---- Load template --------------------------------------------------------------------
+
+    pub fn start_template_list(&mut self) {
+        self.status = None;
+        self.template_files = list_template_files(&self.template_folder);
+        self.template_table_state = TableState::default();
+        if !self.template_files.is_empty() {
+            self.template_table_state.select_first();
+        }
+        self.mode = Mode::TemplateList;
+    }
+
+    pub fn template_list_select_next(&mut self) {
+        if !self.template_files.is_empty() {
+            self.template_table_state.select_next();
+        }
+    }
+
+    pub fn template_list_select_previous(&mut self) {
+        if !self.template_files.is_empty() {
+            self.template_table_state.select_previous();
+        }
+    }
+
+    /// Parse the selected `.hbt` file and open the apply picker, with every shortcut in it
+    /// checked by default.
+    pub fn open_selected_template(&mut self) {
+        let Some(idx) = self.template_table_state.selected() else {
+            return;
+        };
+        let Some(path) = self.template_files.get(idx).cloned() else {
+            return;
+        };
+
+        match keybindings::parse_file(&path) {
+            Ok(config) if config.shortcuts.is_empty() => {
+                self.status = Some(format!("No shortcuts found in {}.", path.display()));
+            }
+            Ok(config) => {
+                self.template_selected = config.shortcuts.iter().map(|s| s.line).collect();
+                self.template_candidates = config.shortcuts;
+                self.template_table_state = TableState::default();
+                self.template_table_state.select_first();
+                self.template_source_name =
+                    path.file_name().map(|n| n.to_string_lossy().into_owned());
+                self.mode = Mode::TemplatePreview;
+            }
+            Err(err) => {
+                self.status = Some(format!("Couldn't read {}: {err}", path.display()));
+            }
+        }
+    }
+
+    /// Append the checked shortcuts to `source_path`, skipping any that would collide with an
+    /// existing shortcut's key combo.
+    pub fn apply_template_selection(&mut self) {
+        if self.template_selected.is_empty() {
+            self.status = Some("Select at least one shortcut to apply (Space to toggle).".to_string());
+            return;
+        }
+
+        let mut lines = Vec::new();
+        let mut skipped = 0;
+        for candidate in &self.template_candidates {
+            if !self.template_selected.contains(&candidate.line) {
+                continue;
+            }
+            if self.shortcuts.iter().any(|existing| existing.same_combo(candidate)) {
+                skipped += 1;
+            } else {
+                lines.push(candidate.resolved_line());
+            }
+        }
+
+        if lines.is_empty() {
+            self.status = Some(format!("Nothing applied: {skipped} shortcut(s) already bound."));
+            self.cancel_template();
+            return;
+        }
+
+        let applied = lines.len();
+        let resume_line = self
+            .table_state
+            .selected()
+            .and_then(|idx| self.visible().get(idx).map(|s| s.line));
+
+        match append_lines(&self.source_path, self.template_source_name.as_deref(), &lines) {
+            Ok(()) => {
+                self.status = Some(if skipped > 0 {
+                    format!("Applied {applied}, skipped {skipped} (already bound).")
+                } else {
+                    format!("Applied {applied} shortcut(s).")
+                });
+                self.cancel_template();
+                match resume_line {
+                    Some(line) => self.reload_and_reselect(line),
+                    None => {
+                        self.load();
+                        self.table_state.select_first();
+                    }
+                }
+            }
+            Err(err) => {
+                self.status = Some(format!("Failed to apply: {err}"));
+            }
+        }
+    }
+
+    /// Abandon whichever template flow is active (save or load) and return to normal browsing.
+    pub fn cancel_template(&mut self) {
+        self.template_candidates.clear();
+        self.template_selected.clear();
+        self.template_table_state = TableState::default();
+        self.template_files.clear();
+        self.template_source_name = None;
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::Normal;
+    }
 }
 
 /// Replace line `line_no` (1-based) of `contents` with `new_line`, preserving every other line
@@ -346,26 +624,75 @@ fn replace_line(contents: &str, line_no: usize, new_line: &str) -> Option<String
     Some(result)
 }
 
-/// Read `path`, replace line `line_no` with `new_line`, and write the result back atomically
-/// (write to a sibling temp file, then rename over the original) so a failed write can never
-/// leave a partially-written config behind for Hyprland to pick up.
-fn write_line(path: &std::path::Path, line_no: usize, new_line: &str) -> io::Result<()> {
-    let contents = std::fs::read_to_string(path)?;
+/// Atomically write `contents` to `path` (write to a sibling `.tmp` file, then rename over the
+/// original) so a failed write can never leave a partially-written file behind.
+fn write_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    let tmp_path = {
+        let mut s = path.as_os_str().to_owned();
+        s.push(".tmp");
+        PathBuf::from(s)
+    };
+    fs::write(&tmp_path, contents)?;
+    fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
+/// Read `path`, replace line `line_no` with `new_line`, and write the result back atomically.
+fn write_line(path: &Path, line_no: usize, new_line: &str) -> io::Result<()> {
+    let contents = fs::read_to_string(path)?;
     let updated = replace_line(&contents, line_no, new_line).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "source file changed on disk; reload and try again",
         )
     })?;
+    write_atomic(path, &updated)
+}
 
-    let tmp_path = {
-        let mut s = path.as_os_str().to_owned();
-        s.push(".tmp");
-        PathBuf::from(s)
+/// Append `new_lines` to the end of `path`, preceded by a blank line and a marker comment, and
+/// write the result back atomically. Every existing line is left untouched.
+fn append_lines(path: &Path, source_label: Option<&str>, new_lines: &[String]) -> io::Result<()> {
+    let mut contents = fs::read_to_string(path)?;
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push('\n');
+    match source_label {
+        Some(label) => contents.push_str(&format!("# Applied from template: {label}\n")),
+        None => contents.push_str("# Applied from template\n"),
+    }
+    for line in new_lines {
+        contents.push_str(line);
+        contents.push('\n');
+    }
+    write_atomic(path, &contents)
+}
+
+/// Write `lines` (already newline-terminated content, one shortcut per line) to `path`,
+/// creating `folder` first if it doesn't exist yet.
+fn write_template(folder: &Path, path: &Path, lines: &[String]) -> io::Result<()> {
+    fs::create_dir_all(folder)?;
+    let mut contents = String::new();
+    for line in lines {
+        contents.push_str(line);
+        contents.push('\n');
+    }
+    write_atomic(path, &contents)
+}
+
+/// List `.hbt` files directly inside `folder`, sorted by name. Returns an empty list if the
+/// folder doesn't exist or can't be read, rather than failing.
+fn list_template_files(folder: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(folder) else {
+        return Vec::new();
     };
-    std::fs::write(&tmp_path, &updated)?;
-    std::fs::rename(&tmp_path, path)?;
-    Ok(())
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some(TEMPLATE_EXTENSION))
+        .collect();
+    files.sort();
+    files
 }
 
 #[cfg(test)]
@@ -393,6 +720,14 @@ mod tests {
         assert!(replace_line(contents, 0, "x").is_none());
     }
 
+    #[test]
+    fn expand_home_handles_tilde_forms() {
+        let home = home_dir();
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(expand_home("~/Templates"), home.join("Templates"));
+        assert_eq!(expand_home("/etc/foo"), PathBuf::from("/etc/foo"));
+    }
+
     fn edit_app() -> App {
         App {
             source_path: PathBuf::from("/dev/null"),
@@ -407,6 +742,12 @@ mod tests {
             editing_line: None,
             resume_line: None,
             status: None,
+            template_folder: PathBuf::from("/dev/null"),
+            template_candidates: Vec::new(),
+            template_selected: HashSet::new(),
+            template_table_state: TableState::default(),
+            template_files: Vec::new(),
+            template_source_name: None,
         }
     }
 
@@ -475,5 +816,107 @@ mod tests {
         app.pop_edit_char();
         assert_eq!(app.edit_buffer, "aé—");
         assert_eq!(app.edit_cursor, 3);
+    }
+
+    #[test]
+    fn toggle_template_selection_toggles_by_line_number() {
+        let mut app = edit_app();
+        app.template_candidates = vec![sample_shortcut(1, "Q"), sample_shortcut(2, "W")];
+        app.template_table_state.select(Some(1));
+
+        app.toggle_template_selection();
+        assert!(app.template_selected.contains(&2));
+
+        app.toggle_template_selection();
+        assert!(!app.template_selected.contains(&2));
+    }
+
+    #[test]
+    fn confirm_template_save_select_requires_a_selection() {
+        let mut app = edit_app();
+        app.mode = Mode::TemplateSaveSelect;
+        app.confirm_template_save_select();
+        assert_eq!(app.mode, Mode::TemplateSaveSelect);
+        assert!(app.status.is_some());
+    }
+
+    #[test]
+    fn confirm_template_save_select_moves_to_naming_when_something_is_checked() {
+        let mut app = edit_app();
+        app.mode = Mode::TemplateSaveSelect;
+        app.template_selected.insert(1);
+        app.confirm_template_save_select();
+        assert_eq!(app.mode, Mode::TemplateSaveName);
+    }
+
+    fn sample_shortcut(line: usize, key: &str) -> Shortcut {
+        Shortcut {
+            bind_type: "bind".to_string(),
+            mods: vec!["SUPER".to_string()],
+            key: key.to_string(),
+            description: None,
+            dispatcher: "exec".to_string(),
+            args: "foo".to_string(),
+            comment: None,
+            line,
+            raw: format!("bind = $mainMod, {key}, exec, foo"),
+            mods_raw: "$mainMod".to_string(),
+            key_raw: key.to_string(),
+            description_raw: None,
+            dispatcher_raw: "exec".to_string(),
+            args_raw: "foo".to_string(),
+        }
+    }
+
+    #[test]
+    fn write_template_creates_folder_and_writes_resolved_lines() {
+        let dir = std::env::temp_dir().join(format!("cachycuts-test-{}", std::process::id()));
+        let folder = dir.join("templates");
+        let path = folder.join("test.hbt");
+
+        let lines = vec![sample_shortcut(1, "Q").resolved_line()];
+        write_template(&folder, &path, &lines).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(contents, "bind = SUPER, Q, exec, foo\n");
+        assert!(!fs::exists(path.with_extension("hbt.tmp")).unwrap_or(false));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn append_lines_adds_marker_comment_and_preserves_existing_content() {
+        let path = std::env::temp_dir().join(format!("cachycuts-test-append-{}.conf", std::process::id()));
+        fs::write(&path, "bind = $mainMod, Q, killactive\n").unwrap();
+
+        append_lines(&path, Some("gaming.hbt"), &["bind = SUPER, W, exec, foo".to_string()]).unwrap();
+
+        let contents = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            contents,
+            "bind = $mainMod, Q, killactive\n\n# Applied from template: gaming.hbt\nbind = SUPER, W, exec, foo\n"
+        );
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn list_template_files_filters_by_extension_and_sorts() {
+        let dir = std::env::temp_dir().join(format!("cachycuts-test-list-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("b.hbt"), "").unwrap();
+        fs::write(dir.join("a.hbt"), "").unwrap();
+        fs::write(dir.join("notes.txt"), "").unwrap();
+
+        let files = list_template_files(&dir);
+        assert_eq!(files, vec![dir.join("a.hbt"), dir.join("b.hbt")]);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn list_template_files_on_missing_folder_returns_empty() {
+        let missing = std::env::temp_dir().join("cachycuts-does-not-exist-hopefully");
+        assert!(list_template_files(&missing).is_empty());
     }
 }

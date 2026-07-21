@@ -123,6 +123,40 @@ impl Shortcut {
         }
         line
     }
+
+    /// A self-contained bind line built from this shortcut's *resolved* values rather than its
+    /// raw ones, so it has no `$VAR` references. Used for template files, which are meant to be
+    /// portable across configs that may not define the same variables (or any at all).
+    pub fn resolved_line(&self) -> String {
+        let mut fields = vec![self.mods.join(" "), self.key.clone()];
+        if let Some(description) = &self.description {
+            fields.push(description.clone());
+        }
+        fields.push(self.dispatcher.clone());
+        if !self.args.is_empty() {
+            fields.push(self.args.clone());
+        }
+
+        let mut line = format!("{} = {}", self.bind_type, fields.join(", "));
+        if let Some(comment) = &self.comment {
+            line.push_str(" # ");
+            line.push_str(comment);
+        }
+        line
+    }
+
+    /// Whether this shortcut and `other` are bound to the same key combo (mods + key), ignoring
+    /// modifier order. Used to detect conflicts when applying a template into a live config.
+    pub fn same_combo(&self, other: &Shortcut) -> bool {
+        if self.key != other.key {
+            return false;
+        }
+        let mut a = self.mods.clone();
+        let mut b = other.mods.clone();
+        a.sort();
+        b.sort();
+        a == b
+    }
 }
 
 #[cfg(test)]
@@ -229,5 +263,33 @@ mod tests {
             updated,
             "bindd = $mainMod SHIFT, T, Float all windows, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations"
         );
+    }
+
+    #[test]
+    fn resolved_line_has_no_var_references() {
+        let updated = shortcut().resolved_line();
+        assert_eq!(
+            updated,
+            "bind = SUPER SHIFT, A, exec, ~/.config/hypr/scripts/toggle-animations.sh # Toggle animations"
+        );
+        assert!(!updated.contains('$'));
+    }
+
+    #[test]
+    fn same_combo_ignores_modifier_order() {
+        let mut other = shortcut();
+        other.mods = vec!["SHIFT".to_string(), "SUPER".to_string()];
+        assert!(shortcut().same_combo(&other));
+    }
+
+    #[test]
+    fn same_combo_false_for_different_key_or_mods() {
+        let mut different_key = shortcut();
+        different_key.key = "B".to_string();
+        assert!(!shortcut().same_combo(&different_key));
+
+        let mut different_mods = shortcut();
+        different_mods.mods = vec!["SUPER".to_string()];
+        assert!(!shortcut().same_combo(&different_mods));
     }
 }

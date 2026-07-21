@@ -32,8 +32,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('G') => app.select_last(),
                     KeyCode::Char('/') => app.enter_search(),
                     KeyCode::Char('e') => app.start_edit_key(),
-                    KeyCode::Char('t') => app.start_edit_target(),
+                    KeyCode::Char('a') => app.start_edit_target(),
                     KeyCode::Char('E') => app.start_edit_main_mod(),
+                    KeyCode::Char('t') => app.start_template_save_select(),
+                    KeyCode::Char('l') => app.start_template_list(),
+                    KeyCode::Char('T') => app.start_edit_template_folder(),
                     _ => {}
                 },
                 Mode::Search => match key.code {
@@ -63,6 +66,61 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     {
                         app.push_edit_char(c);
                     }
+                    _ => {}
+                },
+                Mode::TemplateFolder => match key.code {
+                    KeyCode::Enter => app.save_template_folder(),
+                    KeyCode::Esc => app.cancel_edit(),
+                    KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        app.push_edit_char(c);
+                    }
+                    _ => {}
+                },
+                Mode::TemplateSaveName => match key.code {
+                    KeyCode::Enter => app.save_template(),
+                    KeyCode::Esc => app.cancel_template(),
+                    KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        app.push_edit_char(c);
+                    }
+                    _ => {}
+                },
+                Mode::TemplateSaveSelect => match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => app.template_select_next(),
+                    KeyCode::Up | KeyCode::Char('k') => app.template_select_previous(),
+                    KeyCode::Char(' ') => app.toggle_template_selection(),
+                    KeyCode::Enter => app.confirm_template_save_select(),
+                    KeyCode::Esc => app.cancel_template(),
+                    _ => {}
+                },
+                Mode::TemplatePreview => match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => app.template_select_next(),
+                    KeyCode::Up | KeyCode::Char('k') => app.template_select_previous(),
+                    KeyCode::Char(' ') => app.toggle_template_selection(),
+                    KeyCode::Enter => app.apply_template_selection(),
+                    KeyCode::Esc => app.cancel_template(),
+                    _ => {}
+                },
+                Mode::TemplateList => match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => app.template_list_select_next(),
+                    KeyCode::Up | KeyCode::Char('k') => app.template_list_select_previous(),
+                    KeyCode::Enter => app.open_selected_template(),
+                    KeyCode::Esc => app.cancel_template(),
                     _ => {}
                 },
             }

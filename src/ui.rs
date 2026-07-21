@@ -9,8 +9,16 @@ use crate::app::{App, Mode};
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     let footer_height = match app.mode {
-        Mode::EditKey | Mode::EditTarget | Mode::EditMainMod => 2,
-        Mode::Normal | Mode::Search => 1,
+        Mode::EditKey
+        | Mode::EditTarget
+        | Mode::EditMainMod
+        | Mode::TemplateFolder
+        | Mode::TemplateSaveName => 2,
+        Mode::Normal
+        | Mode::Search
+        | Mode::TemplateSaveSelect
+        | Mode::TemplateList
+        | Mode::TemplatePreview => 1,
     };
     let chunks = Layout::vertical([
         Constraint::Length(3),
@@ -21,17 +29,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_title(frame, app, chunks[0]);
 
-    let visible_len = app.visible().len();
-    if app.shortcuts.is_empty() {
-        draw_message(frame, chunks[1], app.error.as_deref().unwrap_or("No shortcuts to display."));
-    } else if visible_len == 0 {
-        draw_message(
-            frame,
-            chunks[1],
-            &format!("No shortcuts match \"{}\".", app.query),
-        );
-    } else {
-        draw_table(frame, app, chunks[1]);
+    match app.mode {
+        Mode::TemplateSaveSelect | Mode::TemplatePreview => draw_template_picker(frame, app, chunks[1]),
+        Mode::TemplateList => draw_template_list(frame, app, chunks[1]),
+        _ => {
+            let visible_len = app.visible().len();
+            if app.shortcuts.is_empty() {
+                draw_message(frame, chunks[1], app.error.as_deref().unwrap_or("No shortcuts to display."));
+            } else if visible_len == 0 {
+                draw_message(
+                    frame,
+                    chunks[1],
+                    &format!("No shortcuts match \"{}\".", app.query),
+                );
+            } else {
+                draw_table(frame, app, chunks[1]);
+            }
+        }
     }
 
     draw_footer(frame, app, chunks[2]);
@@ -102,11 +116,115 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(table, area, &mut app.table_state);
 }
 
+/// The checkbox multi-select list shared by "pick rows to save" and "pick rows to apply".
+fn draw_template_picker(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.template_candidates.is_empty() {
+        let message = match app.mode {
+            Mode::TemplateSaveSelect => "No shortcuts to save (the current list is empty).",
+            _ => "No shortcuts found in this template.",
+        };
+        draw_message(frame, area, message);
+        return;
+    }
+
+    let title = match app.mode {
+        Mode::TemplateSaveSelect => "Select shortcuts to save".to_string(),
+        _ => {
+            let name = app.template_source_name.as_deref().unwrap_or("template");
+            format!("Select shortcuts to apply from {name}")
+        }
+    };
+
+    let header = Row::new(vec![
+        Cell::from(""),
+        Cell::from("Keys"),
+        Cell::from("Action"),
+        Cell::from("Description"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD))
+    .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .template_candidates
+        .iter()
+        .map(|shortcut| {
+            let checked = if app.template_selected.contains(&shortcut.line) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            Row::new(vec![
+                Cell::from(checked),
+                Cell::from(shortcut.key_combo()),
+                Cell::from(shortcut.action()),
+                Cell::from(shortcut.label().to_string()),
+            ])
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(3),
+        Constraint::Length(22),
+        Constraint::Percentage(38),
+        Constraint::Min(20),
+    ];
+
+    let table = Table::new(rows, widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("› ");
+
+    frame.render_stateful_widget(table, area, &mut app.template_table_state);
+}
+
+fn draw_template_list(frame: &mut Frame, app: &mut App, area: Rect) {
+    if app.template_files.is_empty() {
+        draw_message(
+            frame,
+            area,
+            &format!("No .hbt templates found in {}.", app.template_folder.display()),
+        );
+        return;
+    }
+
+    let rows: Vec<Row> = app
+        .template_files
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            Row::new(vec![Cell::from(name)])
+        })
+        .collect();
+
+    let widths = [Constraint::Percentage(100)];
+    let title = format!("Templates in {}", app.template_folder.display());
+
+    let table = Table::new(rows, widths)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("› ");
+
+    frame.render_stateful_widget(table, area, &mut app.template_table_state);
+}
+
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = match app.mode {
         Mode::EditKey => edit_footer_lines("key", app),
         Mode::EditTarget => edit_footer_lines("target", app),
         Mode::EditMainMod => edit_footer_lines("$mainMod", app),
+        Mode::TemplateFolder => edit_footer_lines("template folder", app),
+        Mode::TemplateSaveName => edit_footer_lines("template name", app),
+        Mode::TemplateSaveSelect => vec![Line::from(
+            "Space toggle   Enter continue   Esc cancel   ↑/k ↓/j move",
+        )],
+        Mode::TemplateList => vec![Line::from("Enter load   Esc cancel   ↑/k ↓/j move")],
+        Mode::TemplatePreview => vec![Line::from(
+            "Space toggle   Enter apply   Esc cancel   ↑/k ↓/j move",
+        )],
         Mode::Search => vec![Line::from(format!(
             "/{}▏   Enter apply   Esc cancel",
             app.query
@@ -118,11 +236,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
                 Line::from(
-                    "/ search   e edit key   t edit target   E edit $mainMod   ↑/k ↓/j move   g/G top/bottom   q quit",
+                    "/ search   e edit key   a edit target   E edit $mainMod   t save template   l load template   T template folder   ↑/k ↓/j move   q quit",
                 )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e edit key   t edit target   E edit $mainMod   ↑/k ↓/j move   g/G top/bottom   q quit",
+                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   t/l templates   ↑/k ↓/j move   q quit",
                     app.query
                 ))
             };
@@ -133,7 +251,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
-    let line_no = app.editing_line.unwrap_or(0);
     let cursor_byte = app.edit_cursor_byte_offset();
     let before = app.edit_buffer[..cursor_byte].to_string();
     let mut rest = app.edit_buffer[cursor_byte..].chars();
@@ -143,7 +260,7 @@ fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
     let after: String = rest.collect();
 
     let prompt = Line::from(vec![
-        Span::raw(format!("editing {field} (line {line_no}): {before}")),
+        Span::raw(format!("editing {field}: {before}")),
         Span::styled(under_cursor, Style::default().add_modifier(Modifier::REVERSED)),
         Span::raw(after),
     ]);
