@@ -2,13 +2,14 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A terminal UI for browsing keyboard shortcuts on this machine. The machine runs
-Hyprland, configured through the ML4W (My Linux 4 Wayland) dotfiles framework,
-and CachyCuts reads the keybindings straight out of that dotfiles repository.
+A terminal UI for viewing and editing Hyprland keyboard shortcuts. It targets
+keybinding files managed by the ML4W (My Linux 4 Wayland) dotfiles framework.
+Nothing about it is specific to CachyOS, or to any single machine: it works on
+any Linux system running Hyprland with an ML4W-style dotfiles layout.
 
 ## What it does
 
-CachyCuts parses the active Hyprland keybinding file:
+CachyCuts parses a Hyprland keybinding file, by default:
 
 ```
 ~/.mydotfiles/com.ml4w.dotfiles/.config/hypr/conf/keybindings/default.conf
@@ -18,12 +19,11 @@ It understands the `bind` directive family used in that file (`bind`, `bindd`,
 `binde`, `bindm`, `bindle`, and similar variants), resolves `$VAR` references
 such as `$mainMod`, and pulls out each binding's modifiers, key, dispatcher,
 arguments, and description or trailing comment. The result is shown as a
-scrollable, searchable table so you can see every shortcut on the system at a
-glance.
+scrollable, searchable table so you can see every shortcut at a glance.
 
-This is a read-only browser for now. It does not edit or write back to the
-dotfiles repository, and it does not parse the alternate Lua keybinding format
-(`default.lua`).
+Editing is the goal, but not implemented yet: today CachyCuts is read-only and
+does not write back to the dotfiles repository. It also does not parse the
+alternate Lua keybinding format (`default.lua`).
 
 ## Requirements
 
