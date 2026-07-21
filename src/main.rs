@@ -47,6 +47,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('t') => app.start_template_save_select(),
                     KeyCode::Char('l') => app.start_template_list(),
                     KeyCode::Char('T') => app.start_edit_template_folder(),
+                    KeyCode::Char('S') => app.start_edit_source_path(),
                     _ => {}
                 },
                 Mode::Search => match key.code {
@@ -64,6 +65,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 },
                 Mode::EditKey | Mode::EditTarget | Mode::EditMainMod => match key.code {
                     KeyCode::Enter => app.save_edit(),
+                    KeyCode::Esc => app.cancel_edit(),
+                    KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        app.push_edit_char(c);
+                    }
+                    _ => {}
+                },
+                Mode::SourcePath => match key.code {
+                    KeyCode::Enter => app.save_source_path(),
                     KeyCode::Esc => app.cancel_edit(),
                     KeyCode::Backspace => app.pop_edit_char(),
                     KeyCode::Delete => app.delete_edit_char(),

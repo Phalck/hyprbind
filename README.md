@@ -5,17 +5,22 @@
 A terminal UI for viewing and editing Hyprland keyboard shortcuts. It works
 directly with Hyprland's own `bind` config syntax, not a distribution- or
 framework-specific format, so parsing and editing shortcuts works on any
-Hyprland setup, on any distribution. By default it looks for the keybindings
-file at the path used by the ML4W (My Linux 4 Wayland) dotfiles framework,
-which is currently the only location it knows to look.
+Hyprland setup, on any distribution.
 
 ## What it does
 
-hyprbind parses a Hyprland keybinding file, by default:
+hyprbind parses a Hyprland keybinding file. By default it tries the path
+used by the ML4W (My Linux 4 Wayland) dotfiles framework:
 
 ```
 ~/.mydotfiles/com.ml4w.dotfiles/.config/hypr/conf/keybindings/default.conf
 ```
+
+If that's not there, it searches `~/.config/hypr` — the one location every
+Hyprland install has, regardless of distribution or dotfiles framework — for
+whichever `.conf` file has the most recognizable shortcuts in it, and uses
+that instead. See [Keybindings file location](#keybindings-file-location)
+below for how this works and how to point it somewhere else entirely.
 
 It understands the `bind` directive family used in that file (`bind`, `bindd`,
 `binde`, `bindm`, `bindle`, and similar variants), resolves `$VAR` references
@@ -31,9 +36,10 @@ untouched. hyprbind does not yet parse the alternate Lua keybinding format
 ## Requirements
 
 - Rust (edition 2024 toolchain)
-- A dotfiles checkout at `~/.mydotfiles/com.ml4w.dotfiles/` with the keybindings
-  file listed above. If the file is missing, hyprbind still starts and shows
-  an error message instead of the table.
+- A Hyprland keybindings file hyprbind can find or be told about — see
+  [Keybindings file location](#keybindings-file-location). If none can be
+  found, hyprbind still starts and shows an error message instead of the
+  table.
 
 ## Install and run
 
@@ -57,6 +63,7 @@ cargo run
 | `t` | Save shortcuts to a new template |
 | `l` | Load a template |
 | `T` | Set the template folder |
+| `S` | Set the keybindings file path |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from,
@@ -141,6 +148,33 @@ references it picks up the new value on the next reload without any of their
 own lines being touched. Whatever shortcut you had selected stays selected
 afterward.
 
+### Keybindings file location
+
+At startup, hyprbind picks a keybindings file to use in two steps:
+
+1. Try the ML4W default path (see [What it does](#what-it-does)).
+2. If that's missing or has no shortcuts in it, search `~/.config/hypr`
+   recursively for `.conf` files, parse each one, and switch to whichever has
+   the most recognizable shortcuts. This follows symlinked directories (so
+   dotfiles managers that populate `~/.config/hypr` via symlinks, including
+   ML4W's own, still resolve correctly) but is cycle-safe. If this finds a
+   file, the status line announces it: `Auto-detected keybindings file: ...`.
+
+If neither step finds anything, hyprbind starts with an empty list and an
+error naming the path it tried, pointing you at `S`.
+
+Press `S` at any time to set the path directly — it opens the same text
+field as the other settings above, prefilled with the current path (`~` is
+expanded). Unlike the template folder, a bad value here is never silently
+accepted: hyprbind tries to parse whatever you enter, and only switches over
+if that file exists and has at least one shortcut in it. If it doesn't
+(typo, wrong path, empty file), you get an error and the file you were
+already using stays active — you're never left looking at a blank list with
+no way back.
+
+This setting isn't persisted between runs, the same as the template folder:
+each launch starts over from step 1 above.
+
 ### Templates
 
 A template is a `.hbt` ("hyperbind template") file: a small text file holding
@@ -191,7 +225,8 @@ skipped.
 Run the test suite, which covers the keybinding parser against representative
 `bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
 keys with no modifiers, search matching, the line-splicing logic used to
-write an edit back to the file, and template save/list/append helpers:
+write an edit back to the file, template save/list/append helpers, and the
+keybindings-file auto-detection scan (including symlink-cycle safety):
 
 ```sh
 cargo test
@@ -213,4 +248,5 @@ src/
   keybindings/
     model.rs             the Shortcut data type
     parser.rs             parses a Hyprland keybindings .conf file
+    discover.rs           searches ~/.config/hypr for the keybindings file
 ```

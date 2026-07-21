@@ -43,6 +43,8 @@ pub enum Mode {
     EditTarget,
     /// Editing the value of the `$mainMod` variable.
     EditMainMod,
+    /// Editing the keybindings file path.
+    SourcePath,
     /// Editing the template save/load folder.
     TemplateFolder,
     /// Picking which visible shortcuts to save into a new template.
@@ -116,6 +118,20 @@ impl App {
             template_source_name: None,
         };
         app.load();
+
+        // The hardcoded ML4W default isn't there (or has nothing in it) — fall back to
+        // searching the standard Hyprland config directory for the real keybindings file,
+        // rather than just giving up. Never overrides a path the user sets manually afterward.
+        if app.shortcuts.is_empty() {
+            if let Some(discovered) = keybindings::discover(&home_dir().join(".config/hypr")) {
+                app.source_path = discovered.clone();
+                app.load();
+                if !app.shortcuts.is_empty() {
+                    app.set_status(format!("Auto-detected keybindings file: {}", discovered.display()));
+                }
+            }
+        }
+
         if !app.shortcuts.is_empty() {
             app.table_state.select_first();
         }
@@ -127,7 +143,10 @@ impl App {
             Ok(config) if config.shortcuts.is_empty() => {
                 self.shortcuts = Vec::new();
                 self.variables = config.variables;
-                self.error = Some(format!("No shortcuts found in {}", self.source_path.display()));
+                self.error = Some(format!(
+                    "No shortcuts found in {}. Press S to set the keybindings file path.",
+                    self.source_path.display()
+                ));
             }
             Ok(config) => {
                 self.shortcuts = config.shortcuts;
@@ -137,7 +156,10 @@ impl App {
             Err(err) => {
                 self.shortcuts = Vec::new();
                 self.variables = Vec::new();
-                self.error = Some(format!("Couldn't read {}: {err}", self.source_path.display()));
+                self.error = Some(format!(
+                    "Couldn't read {}: {err}. Press S to set the keybindings file path.",
+                    self.source_path.display()
+                ));
             }
         }
     }
@@ -396,6 +418,51 @@ impl App {
         if !self.visible().is_empty() {
             self.table_state.select_last();
         }
+    }
+
+    // ---- Keybindings file path ------------------------------------------------------------
+
+    pub fn start_edit_source_path(&mut self) {
+        self.clear_status();
+        self.edit_buffer = self.source_path.display().to_string();
+        self.edit_cursor = self.edit_buffer.chars().count();
+        self.mode = Mode::SourcePath;
+    }
+
+    /// Switch to a different keybindings file, provided it actually parses and has at least one
+    /// shortcut. Unlike the template folder, a bad value here is never silently accepted: this
+    /// path controls what the app reads *and writes*, so `source_path` and the currently-loaded
+    /// shortcuts are left untouched on any failure rather than leaving the user looking at a
+    /// blank list with no explanation.
+    pub fn save_source_path(&mut self) {
+        let input = self.edit_buffer.trim();
+        if input.is_empty() {
+            self.set_status("Keybindings file path can't be empty.".to_string());
+            return;
+        }
+        let expanded = expand_home(input);
+        match keybindings::parse_file(&expanded) {
+            Ok(config) if config.shortcuts.is_empty() => {
+                self.set_status(format!(
+                    "No shortcuts found in {}; keeping the current file.",
+                    expanded.display()
+                ));
+            }
+            Ok(config) => {
+                self.source_path = expanded.clone();
+                self.shortcuts = config.shortcuts;
+                self.variables = config.variables;
+                self.error = None;
+                self.table_state.select_first();
+                self.set_status(format!("Now using {}.", expanded.display()));
+            }
+            Err(err) => {
+                self.set_status(format!("Couldn't read {}: {err}", expanded.display()));
+            }
+        }
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::Normal;
     }
 
     // ---- Template folder ----------------------------------------------------------------
@@ -899,6 +966,65 @@ mod tests {
         app.set_status("fresh");
         app.clear_expired_status();
         assert_eq!(app.status.as_deref(), Some("fresh"));
+    }
+
+    #[test]
+    fn save_source_path_rejects_empty_input() {
+        let mut app = edit_app();
+        let original = app.source_path.clone();
+        app.edit_buffer = "   ".to_string();
+        app.save_source_path();
+        assert_eq!(app.source_path, original);
+        assert!(app.status.is_some());
+    }
+
+    #[test]
+    fn save_source_path_rejects_a_file_with_zero_shortcuts_and_keeps_the_old_one() {
+        let path = std::env::temp_dir()
+            .join(format!("hyprbind-test-source-empty-{}.conf", std::process::id()));
+        fs::write(&path, "# just a comment\n").unwrap();
+
+        let mut app = edit_app();
+        let original_path = app.source_path.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.edit_buffer = path.display().to_string();
+        app.save_source_path();
+
+        assert_eq!(app.source_path, original_path);
+        assert_eq!(app.shortcuts.len(), 1, "old shortcuts must survive a rejected path");
+        assert!(app.status.is_some());
+
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn save_source_path_rejects_a_missing_file_and_keeps_the_old_one() {
+        let missing = std::env::temp_dir().join("hyprbind-test-source-missing-hopefully.conf");
+        let mut app = edit_app();
+        let original_path = app.source_path.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.edit_buffer = missing.display().to_string();
+        app.save_source_path();
+
+        assert_eq!(app.source_path, original_path);
+        assert_eq!(app.shortcuts.len(), 1);
+    }
+
+    #[test]
+    fn save_source_path_switches_to_a_valid_file() {
+        let path = std::env::temp_dir()
+            .join(format!("hyprbind-test-source-valid-{}.conf", std::process::id()));
+        fs::write(&path, "bind = SUPER, Q, killactive\n").unwrap();
+
+        let mut app = edit_app();
+        app.edit_buffer = path.display().to_string();
+        app.save_source_path();
+
+        assert_eq!(app.source_path, path);
+        assert_eq!(app.shortcuts.len(), 1);
+        assert_eq!(app.mode, Mode::Normal);
+
+        fs::remove_file(&path).unwrap();
     }
 
     fn sample_shortcut(line: usize, key: &str) -> Shortcut {

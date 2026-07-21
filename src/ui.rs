@@ -12,6 +12,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::EditKey
         | Mode::EditTarget
         | Mode::EditMainMod
+        | Mode::SourcePath
         | Mode::TemplateFolder
         | Mode::TemplateSaveName => 2,
         Mode::Normal
@@ -99,6 +100,10 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
         Mode::EditMainMod => (
             "Edit $mainMod",
             "change the value every shortcut's $mainMod reference resolves to",
+        ),
+        Mode::SourcePath => (
+            "Keybindings file",
+            "set the path to the Hyprland config file to read and edit",
         ),
         Mode::TemplateFolder => (
             "Template folder",
@@ -272,6 +277,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::EditKey => edit_footer_lines("key", app),
         Mode::EditTarget => edit_footer_lines("target", app),
         Mode::EditMainMod => edit_footer_lines("$mainMod", app),
+        Mode::SourcePath => edit_footer_lines("keybindings file", app),
         Mode::TemplateFolder => edit_footer_lines("template folder", app),
         Mode::TemplateSaveName => edit_footer_lines("template name", app),
         Mode::TemplateSaveSelect => vec![Line::from(
@@ -292,11 +298,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
                 Line::from(
-                    "/ search   e edit key   a edit target   E edit $mainMod   t save template   l load template   T template folder   ↑/k ↓/j move   q quit",
+                    "/ search   e edit key   a edit target   E edit $mainMod   t save template   l load template   T template folder   S keybindings file   ↑/k ↓/j move   q quit",
                 )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   t/l templates   ↑/k ↓/j move   q quit",
+                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   t/l templates   S file   ↑/k ↓/j move   q quit",
                     app.query
                 ))
             };
