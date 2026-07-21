@@ -22,7 +22,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         | Mode::TemplateList
         | Mode::TemplatePreview
         | Mode::BackupList
-        | Mode::BackupConfirm => 1,
+        | Mode::BackupConfirm
+        | Mode::DuplicateKeyConfirm => 1,
     };
     let chunks = Layout::vertical([
         Constraint::Length(4),
@@ -38,6 +39,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::TemplateList => draw_template_list(frame, app, chunks[1]),
         Mode::BackupList => draw_backup_list(frame, app, chunks[1]),
         Mode::BackupConfirm => draw_backup_confirm(frame, app, chunks[1]),
+        Mode::DuplicateKeyConfirm => draw_duplicate_confirm(frame, app, chunks[1]),
         _ => {
             let visible_len = app.visible().len();
             if app.shortcuts.is_empty() {
@@ -138,6 +140,10 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
         Mode::BackupConfirm => (
             "Confirm restore",
             "overwrite the current keybindings file with this backup",
+        ),
+        Mode::DuplicateKeyConfirm => (
+            "Key already used",
+            "add the suggested modifier, or cancel to keep the original key",
         ),
     }
 }
@@ -340,6 +346,36 @@ fn draw_backup_confirm(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(body, area);
 }
 
+fn draw_duplicate_confirm(frame: &mut Frame, app: &App, area: Rect) {
+    let conflicting = app
+        .shortcuts
+        .iter()
+        .find(|s| Some(s.line) == app.duplicate_conflict_line);
+    let conflict_desc = conflicting
+        .map(|s| format!("{} ({})", s.key_combo(), s.action()))
+        .unwrap_or_else(|| "another shortcut".to_string());
+
+    let message = match &app.duplicate_fix_display {
+        Some(fixed) => format!(
+            "{} is already used by {conflict_desc}.\n\n\
+             Enter to use {fixed} instead and save.\n\
+             Esc to cancel (keeps the original key).",
+            app.duplicate_attempted_combo
+        ),
+        None => format!(
+            "{} is already used by {conflict_desc}.\n\n\
+             No unused modifier avoids this conflict.\n\
+             Esc to cancel (keeps the original key).",
+            app.duplicate_attempted_combo
+        ),
+    };
+
+    let body = Paragraph::new(message)
+        .style(Style::default().fg(Color::Yellow))
+        .block(Block::default().borders(Borders::ALL).title("Duplicate keybind"));
+    frame.render_widget(body, area);
+}
+
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = match app.mode {
         Mode::EditKey => edit_footer_lines("key", app),
@@ -358,6 +394,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::BackupFolder => edit_footer_lines("backup folder", app),
         Mode::BackupList => vec![Line::from("Enter select   Esc cancel   ↑/k ↓/j move")],
         Mode::BackupConfirm => vec![Line::from("Enter restore   Esc cancel")],
+        Mode::DuplicateKeyConfirm => vec![Line::from(if app.duplicate_fix_display.is_some() {
+            "Enter apply fix   Esc cancel"
+        } else {
+            "Esc cancel"
+        })],
         Mode::Search => vec![Line::from(format!(
             "/{}▏   Enter apply   Esc cancel",
             app.query

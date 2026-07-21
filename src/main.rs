@@ -183,6 +183,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Esc => app.cancel_backup_restore(),
                     _ => {}
                 },
+                Mode::DuplicateKeyConfirm => match key.code {
+                    KeyCode::Enter => app.accept_duplicate_fix(),
+                    KeyCode::Esc => app.cancel_duplicate_confirm(),
+                    _ => {}
+                },
             }
         }
     }

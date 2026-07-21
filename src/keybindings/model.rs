@@ -148,11 +148,19 @@ impl Shortcut {
     /// Whether this shortcut and `other` are bound to the same key combo (mods + key), ignoring
     /// modifier order. Used to detect conflicts when applying a template into a live config.
     pub fn same_combo(&self, other: &Shortcut) -> bool {
-        if self.key != other.key {
+        self.matches_combo(&other.mods, &other.key)
+    }
+
+    /// Whether this shortcut is bound to `mods`/`key` (mods + key, ignoring modifier order).
+    /// The general form `same_combo` is built on; useful when the combo to compare against
+    /// isn't (yet) a `Shortcut` of its own, e.g. a candidate combo being typed into an edit
+    /// field, checked before it's written anywhere.
+    pub fn matches_combo(&self, mods: &[String], key: &str) -> bool {
+        if self.key != key {
             return false;
         }
         let mut a = self.mods.clone();
-        let mut b = other.mods.clone();
+        let mut b = mods.to_vec();
         a.sort();
         b.sort();
         a == b
@@ -291,5 +299,16 @@ mod tests {
         let mut different_mods = shortcut();
         different_mods.mods = vec!["SUPER".to_string()];
         assert!(!shortcut().same_combo(&different_mods));
+    }
+
+    #[test]
+    fn matches_combo_ignores_modifier_order() {
+        assert!(shortcut().matches_combo(&["SHIFT".to_string(), "SUPER".to_string()], "A"));
+    }
+
+    #[test]
+    fn matches_combo_false_for_different_key_or_mods() {
+        assert!(!shortcut().matches_combo(&["SUPER".to_string(), "SHIFT".to_string()], "B"));
+        assert!(!shortcut().matches_combo(&["SUPER".to_string()], "A"));
     }
 }

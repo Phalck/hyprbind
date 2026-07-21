@@ -140,6 +140,18 @@ Because this edits the file Hyprland reads its keybindings from, keep that
 dotfiles path under version control (as ML4W setups normally are) so you can
 diff or revert a change you don't want.
 
+**Duplicate check.** Pressing Enter after `e` doesn't write immediately if
+the new combo (mods + key, `$VAR` references resolved, modifier order
+ignored) is already used by another shortcut. Instead you get a confirmation
+screen naming the conflicting shortcut, plus — if one of `SUPER`, `SHIFT`,
+`CTRL`, or `ALT` isn't already part of the combo and adding it wouldn't
+itself collide with anything — a suggested fix, e.g. "already used by ...;
+Enter to use SUPER + ALT + Q instead and save." Enter there applies exactly
+that suggestion (nothing else changes); Esc cancels the whole edit, leaving
+the original key untouched. If no unused modifier resolves the conflict, only
+Esc is offered. This check only applies to `e` (the key); editing the target
+with `a` can't create a duplicate, since the key doesn't change.
+
 ### Editing `$mainMod`
 
 Almost every shortcut references `$mainMod` rather than a literal modifier
@@ -265,9 +277,12 @@ keys with no modifiers, search matching, the line-splicing logic used to
 write an edit back to the file, template save/list/append helpers, the
 keybindings-file auto-detection scan (including symlink-cycle safety), the
 persisted-settings file (parsing, round-tripping, and the app-level
-integration that writes it on a successful `S`/`T`/`B`), and backup/restore
+integration that writes it on a successful `S`/`T`/`B`), backup/restore
 (byte-for-byte copy on backup, atomic overwrite plus reload on restore, and
-failure handling for both):
+failure handling for both), and duplicate-key detection (no self-conflict on
+an unchanged combo, `$VAR` resolution when comparing, the fix search finding
+or failing to find an unused modifier, and both outcomes of the confirm
+screen):
 
 ```sh
 cargo test

@@ -12,6 +12,9 @@ use crate::keybindings::{self, Shortcut, Variable};
 
 const TEMPLATE_EXTENSION: &str = "hbt";
 const BACKUP_EXTENSION: &str = "hbb";
+/// Modifiers tried, in order, as a candidate fix when an edited key combo collides with another
+/// shortcut's. Standard Hyprland modifier names, not anything ML4W- or config-specific.
+const STANDARD_MODIFIERS: [&str; 4] = ["SUPER", "SHIFT", "CTRL", "ALT"];
 /// How long a status message stays in the footer before it's cleared automatically, so the
 /// normal key-hint menu comes back without the user having to do anything.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
@@ -86,6 +89,22 @@ pub enum Mode {
     BackupList,
     /// Confirming a restore before it overwrites the keybindings file.
     BackupConfirm,
+    /// Confirming how to resolve a key combo colliding with another shortcut's, after editing
+    /// a shortcut's key.
+    DuplicateKeyConfirm,
+}
+
+/// The result of `App::check_key_conflict`: which other shortcut a candidate combo collides
+/// with, and — if one exists — an unused modifier that would resolve it.
+struct KeyConflict {
+    conflicting_line: usize,
+    attempted_display: String,
+    fix: Option<KeyConflictFix>,
+}
+
+struct KeyConflictFix {
+    mods_raw: String,
+    display_combo: String,
 }
 
 pub struct App {
@@ -132,6 +151,21 @@ pub struct App {
     /// The backup picked in `Mode::BackupList`, awaiting confirmation in `Mode::BackupConfirm`.
     pub backup_selected_path: Option<PathBuf>,
 
+    /// The other shortcut a `Mode::EditKey` save collided with, pending confirmation in
+    /// `Mode::DuplicateKeyConfirm`.
+    pub duplicate_conflict_line: Option<usize>,
+    /// Resolved display of the combo that was attempted, e.g. "SUPER + Q".
+    pub duplicate_attempted_combo: String,
+    /// Resolved display of the combo with the suggested fix applied, e.g. "SUPER + SHIFT + Q".
+    /// `None` if no unused modifier resolves the conflict, in which case only cancelling is
+    /// offered.
+    pub duplicate_fix_display: Option<String>,
+    /// Raw mods text to write (original raw mods plus the extra modifier) if the fix is
+    /// accepted. `None` alongside `duplicate_fix_display: None`.
+    duplicate_fix_mods_raw: Option<String>,
+    /// Raw key text as typed, needed to rebuild the line if the fix is accepted.
+    duplicate_key_raw: String,
+
     /// Where persisted settings are read from and written to. An explicit field (rather than
     /// always calling `config::config_path()` directly) so tests can point it at a scratch path
     /// instead of the real `~/.config/hyprbind/config`.
@@ -166,6 +200,11 @@ impl App {
             backup_files: Vec::new(),
             backup_table_state: TableState::default(),
             backup_selected_path: None,
+            duplicate_conflict_line: None,
+            duplicate_attempted_combo: String::new(),
+            duplicate_fix_display: None,
+            duplicate_fix_mods_raw: None,
+            duplicate_key_raw: String::new(),
             config_path,
         };
         app.load();
@@ -419,20 +458,36 @@ impl App {
     }
 
     /// Rebuild the source line from the edit buffer (interpreted according to which field is
-    /// being edited) and write it back to `source_path` in place, then reload.
+    /// being edited) and write it back to `source_path` in place, then reload. For `EditKey`,
+    /// first checks whether the new combo would collide with another shortcut's; if so, this
+    /// defers to `Mode::DuplicateKeyConfirm` instead of writing anything.
     pub fn save_edit(&mut self) {
         let Some(line_no) = self.editing_line else {
             return;
         };
 
         let new_line = match self.mode {
-            Mode::EditKey => self.shortcuts.iter().find(|s| s.line == line_no).map(|shortcut| {
+            Mode::EditKey => {
                 let (mods_raw, key_raw) = match self.edit_buffer.split_once(',') {
-                    Some((mods, key)) => (mods.trim(), key.trim()),
-                    None => ("", self.edit_buffer.trim()),
+                    Some((mods, key)) => (mods.trim().to_string(), key.trim().to_string()),
+                    None => (String::new(), self.edit_buffer.trim().to_string()),
                 };
-                shortcut.with_key(mods_raw, key_raw)
-            }),
+
+                if let Some(conflict) = self.check_key_conflict(line_no, &mods_raw, &key_raw) {
+                    self.duplicate_conflict_line = Some(conflict.conflicting_line);
+                    self.duplicate_attempted_combo = conflict.attempted_display;
+                    self.duplicate_fix_display = conflict.fix.as_ref().map(|f| f.display_combo.clone());
+                    self.duplicate_fix_mods_raw = conflict.fix.map(|f| f.mods_raw);
+                    self.duplicate_key_raw = key_raw;
+                    self.mode = Mode::DuplicateKeyConfirm;
+                    return;
+                }
+
+                self.shortcuts
+                    .iter()
+                    .find(|s| s.line == line_no)
+                    .map(|shortcut| shortcut.with_key(&mods_raw, &key_raw))
+            }
             Mode::EditTarget => self.shortcuts.iter().find(|s| s.line == line_no).map(|shortcut| {
                 let (dispatcher_raw, args_raw) = match self.edit_buffer.split_once(',') {
                     Some((dispatcher, args)) => (dispatcher.trim(), args.trim()),
@@ -444,6 +499,17 @@ impl App {
                 format!("${} = {}", variable.name, self.edit_buffer.trim())
             }),
             _ => None,
+        };
+
+        self.commit_edit(new_line);
+    }
+
+    /// Write `new_line` to `source_path` at `editing_line` (if present), report the result, and
+    /// return to `Mode::Normal`. Shared by the direct `save_edit` path and, after a detour
+    /// through `Mode::DuplicateKeyConfirm`, `accept_duplicate_fix`.
+    fn commit_edit(&mut self, new_line: Option<String>) {
+        let Some(line_no) = self.editing_line else {
+            return;
         };
 
         match new_line {
@@ -466,6 +532,105 @@ impl App {
         self.editing_line = None;
         self.resume_line = None;
         self.mode = Mode::Normal;
+    }
+
+    /// Whether `mods_raw`/`key_raw` (as typed into the "edit key" field) would resolve to a
+    /// combo already used by some *other* shortcut (`editing_line` is excluded, so re-saving a
+    /// shortcut's own unchanged key is never flagged against itself).
+    fn check_key_conflict(&self, editing_line: usize, mods_raw: &str, key_raw: &str) -> Option<KeyConflict> {
+        let mods = self.resolve_mods(mods_raw);
+        let key = self.resolve_vars(key_raw);
+
+        let conflicting_line = self
+            .shortcuts
+            .iter()
+            .find(|s| s.line != editing_line && s.matches_combo(&mods, &key))?
+            .line;
+
+        let attempted_display = if mods.is_empty() {
+            key.clone()
+        } else {
+            format!("{} + {key}", mods.join(" + "))
+        };
+
+        // Try each standard modifier not already present; the first one that both doesn't
+        // collide with anything else and isn't already part of the attempted combo wins.
+        let fix = STANDARD_MODIFIERS
+            .iter()
+            .filter(|candidate| !mods.iter().any(|m| m == *candidate))
+            .find_map(|candidate| {
+                let mut trial_mods = mods.clone();
+                trial_mods.push((*candidate).to_string());
+                let collides = self
+                    .shortcuts
+                    .iter()
+                    .any(|s| s.line != editing_line && s.matches_combo(&trial_mods, &key));
+                if collides {
+                    return None;
+                }
+                let fixed_mods_raw = if mods_raw.trim().is_empty() {
+                    candidate.to_string()
+                } else {
+                    format!("{} {candidate}", mods_raw.trim())
+                };
+                Some(KeyConflictFix {
+                    mods_raw: fixed_mods_raw,
+                    display_combo: format!("{} + {key}", trial_mods.join(" + ")),
+                })
+            });
+
+        Some(KeyConflict { conflicting_line, attempted_display, fix })
+    }
+
+    /// Resolve `$VAR` references in `raw` against the currently-loaded variables, mirroring how
+    /// the parser resolves them when loading the file. Used to compare a not-yet-written combo
+    /// against already-loaded (and thus already-resolved) shortcuts on equal terms.
+    fn resolve_vars(&self, raw: &str) -> String {
+        let mut result = raw.to_string();
+        for var in &self.variables {
+            result = result.replace(&format!("${}", var.name), &var.value);
+        }
+        result
+    }
+
+    fn resolve_mods(&self, mods_raw: &str) -> Vec<String> {
+        self.resolve_vars(mods_raw)
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    /// Accept the suggested fix (if any) from `Mode::DuplicateKeyConfirm`: add the extra
+    /// modifier and save. If there's nothing to accept (no unused modifier resolved the
+    /// conflict), this just cancels instead.
+    pub fn accept_duplicate_fix(&mut self) {
+        let (Some(mods_raw), Some(line_no)) = (self.duplicate_fix_mods_raw.clone(), self.editing_line) else {
+            self.cancel_duplicate_confirm();
+            return;
+        };
+        let key_raw = self.duplicate_key_raw.clone();
+        let new_line = self
+            .shortcuts
+            .iter()
+            .find(|s| s.line == line_no)
+            .map(|shortcut| shortcut.with_key(&mods_raw, &key_raw));
+
+        self.clear_duplicate_state();
+        self.commit_edit(new_line);
+    }
+
+    /// Abandon the duplicate-key flow and the edit that triggered it; nothing is written.
+    pub fn cancel_duplicate_confirm(&mut self) {
+        self.clear_duplicate_state();
+        self.cancel_edit();
+    }
+
+    fn clear_duplicate_state(&mut self) {
+        self.duplicate_conflict_line = None;
+        self.duplicate_attempted_combo.clear();
+        self.duplicate_fix_display = None;
+        self.duplicate_fix_mods_raw = None;
+        self.duplicate_key_raw.clear();
     }
 
     pub fn select_next(&mut self) {
@@ -1063,6 +1228,11 @@ mod tests {
             backup_files: Vec::new(),
             backup_table_state: TableState::default(),
             backup_selected_path: None,
+            duplicate_conflict_line: None,
+            duplicate_attempted_combo: String::new(),
+            duplicate_fix_display: None,
+            duplicate_fix_mods_raw: None,
+            duplicate_key_raw: String::new(),
             // Guaranteed to fail (/dev/null isn't a directory, so create_dir_all on any path
             // under it errors out) so a stray persist_settings() call in a test can never write
             // to a real location, let alone the user's actual ~/.config/hyprbind/config.
@@ -1440,6 +1610,189 @@ mod tests {
             dispatcher_raw: "exec".to_string(),
             args_raw: "foo".to_string(),
         }
+    }
+
+    fn shortcut_with_mods(line: usize, mods: &[&str], key: &str) -> Shortcut {
+        let mut s = sample_shortcut(line, key);
+        s.mods = mods.iter().map(|m| m.to_string()).collect();
+        s.mods_raw = mods.join(" ");
+        s
+    }
+
+    #[test]
+    fn save_edit_editkey_no_conflict_saves_normally() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-dupkey-noconflict-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, exec, foo\nbind = SUPER, W, exec, bar\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q"), sample_shortcut(2, "W")];
+        app.mode = Mode::EditKey;
+        app.editing_line = Some(1);
+        app.edit_buffer = "SUPER, E".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.status.as_deref(), Some("Saved."));
+        let contents = fs::read_to_string(&source).unwrap();
+        assert!(contents.lines().next().unwrap().contains(", E,"));
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_editkey_unchanged_combo_is_not_flagged_as_a_self_conflict() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-dupkey-selfsame-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::EditKey;
+        app.editing_line = Some(1);
+        app.edit_buffer = "SUPER, Q".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.mode, Mode::Normal, "saving a shortcut's own unchanged combo isn't a conflict");
+        assert_eq!(app.status.as_deref(), Some("Saved."));
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_editkey_conflict_offers_a_fix_when_one_is_available() {
+        let mut app = edit_app();
+        app.shortcuts = vec![
+            shortcut_with_mods(1, &["SUPER"], "Q"),
+            shortcut_with_mods(2, &["SUPER"], "W"),
+        ];
+        app.mode = Mode::EditKey;
+        app.editing_line = Some(1);
+        app.edit_buffer = "SUPER, W".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.mode, Mode::DuplicateKeyConfirm);
+        assert_eq!(app.duplicate_conflict_line, Some(2));
+        assert_eq!(app.duplicate_attempted_combo, "SUPER + W");
+        assert_eq!(app.duplicate_fix_display.as_deref(), Some("SUPER + SHIFT + W"));
+    }
+
+    #[test]
+    fn save_edit_editkey_conflict_with_no_available_fix() {
+        let mut app = edit_app();
+        app.shortcuts = vec![
+            shortcut_with_mods(1, &["ALT"], "Q"),
+            shortcut_with_mods(2, &["SUPER"], "Q"),
+            shortcut_with_mods(3, &["SUPER", "SHIFT"], "Q"),
+            shortcut_with_mods(4, &["SUPER", "CTRL"], "Q"),
+            shortcut_with_mods(5, &["SUPER", "ALT"], "Q"),
+        ];
+        app.mode = Mode::EditKey;
+        app.editing_line = Some(1);
+        app.edit_buffer = "SUPER, Q".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.mode, Mode::DuplicateKeyConfirm);
+        assert_eq!(app.duplicate_conflict_line, Some(2));
+        assert!(
+            app.duplicate_fix_display.is_none(),
+            "every SUPER+<one more modifier>+Q combo is already taken"
+        );
+    }
+
+    #[test]
+    fn save_edit_editkey_conflict_detection_resolves_dollar_vars() {
+        let mut app = edit_app();
+        app.variables = vec![Variable {
+            name: "mainMod".to_string(),
+            value: "SUPER".to_string(),
+            line: 1,
+        }];
+        app.shortcuts = vec![
+            shortcut_with_mods(2, &["SUPER"], "Q"),
+            shortcut_with_mods(3, &["SUPER"], "W"),
+        ];
+        app.mode = Mode::EditKey;
+        app.editing_line = Some(2);
+        app.edit_buffer = "$mainMod, W".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.mode, Mode::DuplicateKeyConfirm);
+        assert_eq!(app.duplicate_conflict_line, Some(3));
+        assert_eq!(app.duplicate_attempted_combo, "SUPER + W");
+    }
+
+    #[test]
+    fn accept_duplicate_fix_writes_the_fixed_combo_and_returns_to_normal() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-dupkey-acceptfix-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![shortcut_with_mods(1, &["SUPER"], "Q")];
+        app.mode = Mode::DuplicateKeyConfirm;
+        app.editing_line = Some(1);
+        app.duplicate_fix_mods_raw = Some("SUPER SHIFT".to_string());
+        app.duplicate_key_raw = "Q".to_string();
+
+        app.accept_duplicate_fix();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.duplicate_fix_mods_raw.is_none());
+        let contents = fs::read_to_string(&source).unwrap();
+        assert!(contents.starts_with("bind = SUPER SHIFT, Q,"));
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn accept_duplicate_fix_with_nothing_to_accept_just_cancels() {
+        let mut app = edit_app();
+        app.shortcuts = vec![shortcut_with_mods(1, &["SUPER"], "Q")];
+        app.mode = Mode::DuplicateKeyConfirm;
+        app.editing_line = Some(1);
+        app.duplicate_fix_mods_raw = None;
+        app.duplicate_conflict_line = Some(2);
+
+        app.accept_duplicate_fix();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.editing_line.is_none());
+        assert!(app.duplicate_conflict_line.is_none());
+    }
+
+    #[test]
+    fn cancel_duplicate_confirm_writes_nothing_and_resets_state() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-dupkey-cancel-{}.conf", std::process::id()));
+        let original = "bind = SUPER, Q, exec, foo\n";
+        fs::write(&source, original).unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![shortcut_with_mods(1, &["SUPER"], "Q")];
+        app.mode = Mode::DuplicateKeyConfirm;
+        app.editing_line = Some(1);
+        app.duplicate_fix_mods_raw = Some("SUPER SHIFT".to_string());
+        app.duplicate_conflict_line = Some(2);
+
+        app.cancel_duplicate_confirm();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.editing_line.is_none());
+        assert!(app.duplicate_fix_mods_raw.is_none());
+        assert!(app.duplicate_conflict_line.is_none());
+        assert_eq!(fs::read_to_string(&source).unwrap(), original, "cancel must never write anything");
+
+        fs::remove_file(&source).unwrap();
     }
 
     #[test]
