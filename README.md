@@ -89,8 +89,11 @@ touching survives untouched.
 
 | Key | Action |
 | --- | --- |
-| Any character | Insert at the end of the field |
-| Backspace | Remove the last character |
+| Any character | Insert at the cursor |
+| Left / Right | Move the cursor one character |
+| Home / End | Jump to the start / end of the field |
+| Backspace | Delete the character before the cursor |
+| Delete | Delete the character at the cursor |
 | Enter | Save: write the change back to the file, in place |
 | Esc | Cancel without touching the file |
 

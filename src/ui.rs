@@ -133,8 +133,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
     let line_no = app.editing_line.unwrap_or(0);
+    let (before, after) = app.edit_buffer.split_at(app.edit_cursor_byte_offset());
     vec![
-        Line::from(format!("editing {field} (line {line_no}): {}▏", app.edit_buffer)),
-        Line::from("Enter save   Esc cancel"),
+        Line::from(format!("editing {field} (line {line_no}): {before}▏{after}")),
+        Line::from("Enter save   Esc cancel   ←/→ move   Home/End jump"),
     ]
 }

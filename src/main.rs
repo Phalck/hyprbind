@@ -52,6 +52,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Enter => app.save_edit(),
                     KeyCode::Esc => app.cancel_edit(),
                     KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
                     KeyCode::Char(c)
                         if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                     {

@@ -32,6 +32,8 @@ pub struct App {
     pub query: String,
     pub mode: Mode,
     pub edit_buffer: String,
+    /// Cursor position within `edit_buffer`, as a count of `char`s (not bytes) from the start.
+    pub edit_cursor: usize,
     /// The source line number currently being edited, so a save knows where to splice.
     pub editing_line: Option<usize>,
     /// Transient message shown in the footer after a save (success or failure).
@@ -49,6 +51,7 @@ impl App {
             query: String::new(),
             mode: Mode::Normal,
             edit_buffer: String::new(),
+            edit_cursor: 0,
             editing_line: None,
             status: None,
         };
@@ -144,6 +147,7 @@ impl App {
             return;
         };
         self.status = None;
+        self.edit_cursor = buffer.chars().count();
         self.edit_buffer = buffer;
         self.editing_line = Some(line);
         self.mode = mode;
@@ -151,16 +155,68 @@ impl App {
 
     pub fn cancel_edit(&mut self) {
         self.edit_buffer.clear();
+        self.edit_cursor = 0;
         self.editing_line = None;
         self.mode = Mode::Normal;
     }
 
+    /// Insert `c` at the cursor and advance the cursor past it.
     pub fn push_edit_char(&mut self, c: char) {
-        self.edit_buffer.push(c);
+        let byte_idx = self.edit_cursor_byte_offset();
+        self.edit_buffer.insert(byte_idx, c);
+        self.edit_cursor += 1;
     }
 
+    /// Remove the character before the cursor (backspace).
     pub fn pop_edit_char(&mut self) {
-        self.edit_buffer.pop();
+        if self.edit_cursor == 0 {
+            return;
+        }
+        let byte_idx = self.char_to_byte_offset(self.edit_cursor - 1);
+        self.edit_buffer.remove(byte_idx);
+        self.edit_cursor -= 1;
+    }
+
+    /// Remove the character at the cursor (forward delete).
+    pub fn delete_edit_char(&mut self) {
+        if self.edit_cursor >= self.edit_buffer.chars().count() {
+            return;
+        }
+        let byte_idx = self.edit_cursor_byte_offset();
+        self.edit_buffer.remove(byte_idx);
+    }
+
+    pub fn move_edit_cursor_left(&mut self) {
+        self.edit_cursor = self.edit_cursor.saturating_sub(1);
+    }
+
+    pub fn move_edit_cursor_right(&mut self) {
+        let len = self.edit_buffer.chars().count();
+        if self.edit_cursor < len {
+            self.edit_cursor += 1;
+        }
+    }
+
+    pub fn move_edit_cursor_home(&mut self) {
+        self.edit_cursor = 0;
+    }
+
+    pub fn move_edit_cursor_end(&mut self) {
+        self.edit_cursor = self.edit_buffer.chars().count();
+    }
+
+    /// Byte offset in `edit_buffer` corresponding to `edit_cursor` (a char count), so callers can
+    /// split or splice the buffer without risking a UTF-8 boundary panic.
+    pub fn edit_cursor_byte_offset(&self) -> usize {
+        self.char_to_byte_offset(self.edit_cursor)
+    }
+
+    fn char_to_byte_offset(&self, char_idx: usize) -> usize {
+        self.edit_buffer
+            .char_indices()
+            .nth(char_idx)
+            .map(|(byte_idx, _)| byte_idx)
+            .unwrap_or(self.edit_buffer.len())
     }
 
     /// Rebuild the source line from the edit buffer (interpreted according to which field is
@@ -204,6 +260,7 @@ impl App {
         }
 
         self.edit_buffer.clear();
+        self.edit_cursor = 0;
         self.editing_line = None;
         self.mode = Mode::Normal;
     }
@@ -296,5 +353,87 @@ mod tests {
         let contents = "one\ntwo\n";
         assert!(replace_line(contents, 5, "x").is_none());
         assert!(replace_line(contents, 0, "x").is_none());
+    }
+
+    fn edit_app() -> App {
+        App {
+            source_path: PathBuf::from("/dev/null"),
+            shortcuts: Vec::new(),
+            table_state: TableState::default(),
+            error: None,
+            query: String::new(),
+            mode: Mode::EditKey,
+            edit_buffer: String::new(),
+            edit_cursor: 0,
+            editing_line: None,
+            status: None,
+        }
+    }
+
+    #[test]
+    fn push_edit_char_inserts_at_cursor_not_only_at_end() {
+        let mut app = edit_app();
+        app.edit_buffer = "ac".to_string();
+        app.edit_cursor = 1;
+        app.push_edit_char('b');
+        assert_eq!(app.edit_buffer, "abc");
+        assert_eq!(app.edit_cursor, 2);
+    }
+
+    #[test]
+    fn pop_edit_char_removes_before_cursor() {
+        let mut app = edit_app();
+        app.edit_buffer = "abc".to_string();
+        app.edit_cursor = 2;
+        app.pop_edit_char();
+        assert_eq!(app.edit_buffer, "ac");
+        assert_eq!(app.edit_cursor, 1);
+    }
+
+    #[test]
+    fn pop_edit_char_at_start_of_buffer_does_nothing() {
+        let mut app = edit_app();
+        app.edit_buffer = "abc".to_string();
+        app.edit_cursor = 0;
+        app.pop_edit_char();
+        assert_eq!(app.edit_buffer, "abc");
+        assert_eq!(app.edit_cursor, 0);
+    }
+
+    #[test]
+    fn delete_edit_char_removes_character_at_cursor() {
+        let mut app = edit_app();
+        app.edit_buffer = "abc".to_string();
+        app.edit_cursor = 1;
+        app.delete_edit_char();
+        assert_eq!(app.edit_buffer, "ac");
+        assert_eq!(app.edit_cursor, 1);
+    }
+
+    #[test]
+    fn cursor_movement_is_clamped_to_buffer_bounds() {
+        let mut app = edit_app();
+        app.edit_buffer = "ab".to_string();
+
+        app.move_edit_cursor_left();
+        assert_eq!(app.edit_cursor, 0, "can't move left of the start");
+
+        app.move_edit_cursor_end();
+        assert_eq!(app.edit_cursor, 2);
+        app.move_edit_cursor_right();
+        assert_eq!(app.edit_cursor, 2, "can't move right of the end");
+
+        app.move_edit_cursor_home();
+        assert_eq!(app.edit_cursor, 0);
+    }
+
+    #[test]
+    fn cursor_operations_respect_utf8_character_boundaries() {
+        let mut app = edit_app();
+        app.edit_buffer = "aé—b".to_string();
+        app.edit_cursor = 4;
+        app.pop_edit_char();
+        assert_eq!(app.edit_buffer, "aé—");
+        assert_eq!(app.edit_cursor, 3);
     }
 }
