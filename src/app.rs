@@ -1,3 +1,4 @@
+use std::io;
 use std::path::PathBuf;
 
 use ratatui::widgets::TableState;
@@ -16,6 +17,8 @@ fn default_keybindings_path() -> PathBuf {
 pub enum Mode {
     Normal,
     Search,
+    /// Editing the raw source line of the selected shortcut.
+    Edit,
 }
 
 pub struct App {
@@ -26,35 +29,62 @@ pub struct App {
     pub error: Option<String>,
     pub query: String,
     pub mode: Mode,
+    pub edit_buffer: String,
+    /// The source line number currently being edited, so a save knows where to splice.
+    pub editing_line: Option<usize>,
+    /// Transient message shown in the footer after a save (success or failure).
+    pub status: Option<String>,
 }
 
 impl App {
     pub fn new() -> Self {
         let source_path = default_keybindings_path();
-        let (shortcuts, error) = match keybindings::parse_file(&source_path) {
-            Ok(shortcuts) if shortcuts.is_empty() => (
-                Vec::new(),
-                Some(format!("No shortcuts found in {}", source_path.display())),
-            ),
-            Ok(shortcuts) => (shortcuts, None),
-            Err(err) => (
-                Vec::new(),
-                Some(format!("Couldn't read {}: {err}", source_path.display())),
-            ),
-        };
-
-        let mut table_state = TableState::default();
-        if !shortcuts.is_empty() {
-            table_state.select_first();
-        }
-
-        Self {
+        let mut app = Self {
             source_path,
-            shortcuts,
-            table_state,
-            error,
+            shortcuts: Vec::new(),
+            table_state: TableState::default(),
+            error: None,
             query: String::new(),
             mode: Mode::Normal,
+            edit_buffer: String::new(),
+            editing_line: None,
+            status: None,
+        };
+        app.load();
+        if !app.shortcuts.is_empty() {
+            app.table_state.select_first();
+        }
+        app
+    }
+
+    fn load(&mut self) {
+        match keybindings::parse_file(&self.source_path) {
+            Ok(shortcuts) if shortcuts.is_empty() => {
+                self.shortcuts = Vec::new();
+                self.error = Some(format!("No shortcuts found in {}", self.source_path.display()));
+            }
+            Ok(shortcuts) => {
+                self.shortcuts = shortcuts;
+                self.error = None;
+            }
+            Err(err) => {
+                self.shortcuts = Vec::new();
+                self.error = Some(format!("Couldn't read {}: {err}", self.source_path.display()));
+            }
+        }
+    }
+
+    /// Reload from disk and try to keep the selection on the shortcut that used to be at
+    /// `target_line`, falling back to the first visible row if it's gone (e.g. the edit turned
+    /// it into something the parser no longer recognizes as a bind).
+    fn reload_and_reselect(&mut self, target_line: usize) {
+        self.load();
+        let pos = self.visible().iter().position(|s| s.line == target_line);
+        let visible_len = self.visible().len();
+        match pos {
+            Some(pos) => self.table_state.select(Some(pos)),
+            None if visible_len == 0 => self.table_state.select(None),
+            None => self.table_state.select_first(),
         }
     }
 
@@ -69,6 +99,7 @@ impl App {
     }
 
     pub fn enter_search(&mut self) {
+        self.status = None;
         self.mode = Mode::Search;
     }
 
@@ -90,6 +121,54 @@ impl App {
     pub fn pop_query_char(&mut self) {
         self.query.pop();
         self.table_state.select_first();
+    }
+
+    /// Start editing the raw source line of the currently selected shortcut.
+    pub fn start_edit(&mut self) {
+        let Some(idx) = self.table_state.selected() else {
+            return;
+        };
+        let selected = self.visible().get(idx).map(|s| (s.raw.clone(), s.line));
+        let Some((raw, line)) = selected else {
+            return;
+        };
+        self.status = None;
+        self.edit_buffer = raw;
+        self.editing_line = Some(line);
+        self.mode = Mode::Edit;
+    }
+
+    pub fn cancel_edit(&mut self) {
+        self.edit_buffer.clear();
+        self.editing_line = None;
+        self.mode = Mode::Normal;
+    }
+
+    pub fn push_edit_char(&mut self, c: char) {
+        self.edit_buffer.push(c);
+    }
+
+    pub fn pop_edit_char(&mut self) {
+        self.edit_buffer.pop();
+    }
+
+    /// Write the edit buffer back to `source_path` in place of its original line, then reload.
+    pub fn save_edit(&mut self) {
+        let Some(line_no) = self.editing_line else {
+            return;
+        };
+        match write_line(&self.source_path, line_no, &self.edit_buffer) {
+            Ok(()) => {
+                self.status = Some("Saved.".to_string());
+                self.reload_and_reselect(line_no);
+            }
+            Err(err) => {
+                self.status = Some(format!("Failed to save: {err}"));
+            }
+        }
+        self.edit_buffer.clear();
+        self.editing_line = None;
+        self.mode = Mode::Normal;
     }
 
     pub fn select_next(&mut self) {
@@ -114,5 +193,71 @@ impl App {
         if !self.visible().is_empty() {
             self.table_state.select_last();
         }
+    }
+}
+
+/// Replace line `line_no` (1-based) of `contents` with `new_line`, preserving every other line
+/// and whether the file ended with a trailing newline. Returns `None` if `line_no` is out of
+/// range for `contents` (e.g. the file changed on disk since it was parsed).
+fn replace_line(contents: &str, line_no: usize, new_line: &str) -> Option<String> {
+    let mut lines: Vec<&str> = contents.lines().collect();
+    let idx = line_no.checked_sub(1)?;
+    if idx >= lines.len() {
+        return None;
+    }
+    lines[idx] = new_line;
+
+    let mut result = lines.join("\n");
+    if contents.ends_with('\n') {
+        result.push('\n');
+    }
+    Some(result)
+}
+
+/// Read `path`, replace line `line_no` with `new_line`, and write the result back atomically
+/// (write to a sibling temp file, then rename over the original) so a failed write can never
+/// leave a partially-written config behind for Hyprland to pick up.
+fn write_line(path: &std::path::Path, line_no: usize, new_line: &str) -> io::Result<()> {
+    let contents = std::fs::read_to_string(path)?;
+    let updated = replace_line(&contents, line_no, new_line).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source file changed on disk; reload and try again",
+        )
+    })?;
+
+    let tmp_path = {
+        let mut s = path.as_os_str().to_owned();
+        s.push(".tmp");
+        PathBuf::from(s)
+    };
+    std::fs::write(&tmp_path, &updated)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_line_swaps_only_target_line() {
+        let contents = "one\ntwo\nthree\n";
+        let updated = replace_line(contents, 2, "TWO").unwrap();
+        assert_eq!(updated, "one\nTWO\nthree\n");
+    }
+
+    #[test]
+    fn replace_line_preserves_missing_trailing_newline() {
+        let contents = "one\ntwo\nthree";
+        let updated = replace_line(contents, 1, "ONE").unwrap();
+        assert_eq!(updated, "ONE\ntwo\nthree");
+    }
+
+    #[test]
+    fn replace_line_out_of_range_returns_none() {
+        let contents = "one\ntwo\n";
+        assert!(replace_line(contents, 5, "x").is_none());
+        assert!(replace_line(contents, 0, "x").is_none());
     }
 }

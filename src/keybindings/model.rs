@@ -12,8 +12,12 @@ pub struct Shortcut {
     pub args: String,
     /// Trailing `# ...` comment, if any.
     pub comment: Option<String>,
-    /// 1-based line number in the source file, kept for future editing/write-back.
+    /// 1-based line number in the source file, used to write an edited line back in place.
     pub line: usize,
+    /// The exact, unmodified source line this shortcut was parsed from (no `$VAR` substitution
+    /// applied). Used as the starting point when editing, so a save round-trips anything the
+    /// parser doesn't otherwise represent (comments, variable references, exact spacing).
+    pub raw: String,
 }
 
 impl Shortcut {
@@ -71,6 +75,8 @@ mod tests {
             args: "~/.config/hypr/scripts/toggle-animations.sh".to_string(),
             comment: Some("Toggle animations".to_string()),
             line: 1,
+            raw: "bind = $mainMod SHIFT, A, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations"
+                .to_string(),
         }
     }
 

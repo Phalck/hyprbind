@@ -35,7 +35,7 @@ pub fn parse_str(contents: &str) -> Vec<Shortcut> {
             continue;
         }
 
-        if let Some(shortcut) = parse_bind_line(line, line_no, &vars) {
+        if let Some(shortcut) = parse_bind_line(line, raw_line, line_no, &vars) {
             shortcuts.push(shortcut);
         }
     }
@@ -43,7 +43,12 @@ pub fn parse_str(contents: &str) -> Vec<Shortcut> {
     shortcuts
 }
 
-fn parse_bind_line(line: &str, line_no: usize, vars: &HashMap<String, String>) -> Option<Shortcut> {
+fn parse_bind_line(
+    line: &str,
+    raw_line: &str,
+    line_no: usize,
+    vars: &HashMap<String, String>,
+) -> Option<Shortcut> {
     if !line.starts_with("bind") {
         return None;
     }
@@ -98,6 +103,7 @@ fn parse_bind_line(line: &str, line_no: usize, vars: &HashMap<String, String>) -
         args,
         comment,
         line: line_no,
+        raw: raw_line.to_string(),
     })
 }
 

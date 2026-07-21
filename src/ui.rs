@@ -8,10 +8,11 @@ use crate::app::{App, Mode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+    let footer_height = if app.mode == Mode::Edit { 2 } else { 1 };
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(0),
-        Constraint::Length(1),
+        Constraint::Length(footer_height),
     ])
     .split(area);
 
@@ -99,20 +100,33 @@ fn draw_table(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let text = match app.mode {
-        Mode::Search => Line::from(format!("/{}▏   Enter apply   Esc cancel", app.query)),
+    let lines: Vec<Line> = match app.mode {
+        Mode::Edit => {
+            let line_no = app.editing_line.unwrap_or(0);
+            vec![
+                Line::from(format!("editing line {line_no}: {}▏", app.edit_buffer)),
+                Line::from("Enter save   Esc cancel"),
+            ]
+        }
+        Mode::Search => vec![Line::from(format!(
+            "/{}▏   Enter apply   Esc cancel",
+            app.query
+        ))],
         Mode::Normal => {
-            if let Some(error) = &app.error {
+            let line = if let Some(error) = &app.error {
                 Line::from(error.as_str()).style(Style::default().fg(Color::Red))
+            } else if let Some(status) = &app.status {
+                Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
-                Line::from("/ search   ↑/k ↓/j move   g/G top/bottom   q quit")
+                Line::from("/ search   e edit   ↑/k ↓/j move   g/G top/bottom   q quit")
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / edit   ↑/k ↓/j move   g/G top/bottom   q quit",
+                    "filter: \"{}\"   / change filter   e edit   ↑/k ↓/j move   g/G top/bottom   q quit",
                     app.query
                 ))
-            }
+            };
+            vec![line]
         }
     };
-    frame.render_widget(Paragraph::new(text), area);
+    frame.render_widget(Paragraph::new(lines), area);
 }

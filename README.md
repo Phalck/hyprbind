@@ -21,9 +21,10 @@ such as `$mainMod`, and pulls out each binding's modifiers, key, dispatcher,
 arguments, and description or trailing comment. The result is shown as a
 scrollable, searchable table so you can see every shortcut at a glance.
 
-Editing is the goal, but not implemented yet: today CachyCuts is read-only and
-does not write back to the dotfiles repository. It also does not parse the
-alternate Lua keybinding format (`default.lua`).
+Shortcuts can be edited in place: the change is written straight back to that
+same line in the source file, with everything else in the file left
+untouched. CachyCuts does not yet parse the alternate Lua keybinding format
+(`default.lua`).
 
 ## Requirements
 
@@ -48,6 +49,7 @@ cargo run
 | `g` | Jump to the first shortcut |
 | `G` | Jump to the last shortcut |
 | `/` | Start or edit a search |
+| `e` or Enter | Edit the selected shortcut |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from.
@@ -70,11 +72,36 @@ each shortcut, case-insensitively.
 While a filter is active, press `/` again to edit it, or clear it by
 backspacing to an empty query and pressing Enter (or by pressing Esc).
 
+### Editing
+
+Press `e` or Enter on a selected shortcut to edit it. This opens its exact
+source line as an editable text field, prefilled with the original text
+(including modifiers, key, dispatcher, arguments, `$VAR` references, and any
+trailing comment). Change whatever you need, then save.
+
+| Key | Action |
+| --- | --- |
+| Any character | Insert at the end of the line |
+| Backspace | Remove the last character |
+| Enter | Save: write the line back to the file, in place |
+| Esc | Cancel without touching the file |
+
+Saving replaces only that one line in the source file; every other line is
+left byte-for-byte as it was. The write is atomic (written to a temp file,
+then renamed into place), so a failure partway through can't leave the
+keybindings file half-written. After a successful save, the table reloads
+from disk and the row you edited stays selected.
+
+Because this edits the file Hyprland reads its keybindings from, keep that
+dotfiles path under version control (as ML4W setups normally are) so you can
+diff or revert a change you don't want.
+
 ## Development
 
 Run the test suite, which covers the keybinding parser against representative
 `bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
-keys with no modifiers, and search matching:
+keys with no modifiers, search matching, and the line-splicing logic used to
+write an edit back to the file:
 
 ```sh
 cargo test
