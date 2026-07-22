@@ -1,11 +1,27 @@
-/// A `$VAR = value` definition line, e.g. `$mainMod = SUPER`.
+/// Which keybinding file syntax a `Shortcut` or `Variable` was parsed from, since the two
+/// supported formats (Hyprland's own `.conf` and ML4W's Lua DSL) need different logic to
+/// rebuild a source line from edited fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceFormat {
+    /// Hyprland's native `bind = mods, key, dispatcher, args # comment` syntax.
+    Conf,
+    /// ML4W's `hl.bind(key_expr, dispatcher_expr, { options })` Lua syntax.
+    Lua,
+}
+
+/// A `$VAR = value` definition line (`.conf`) or `local NAME = "value"` assignment (Lua), e.g.
+/// `$mainMod = SUPER` or `local mainMod = "SUPER"`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variable {
-    /// Without the leading `$`, e.g. "mainMod".
+    /// Without the leading `$` (`.conf`) or the `local` keyword (Lua), e.g. "mainMod".
     pub name: String,
     pub value: String,
     /// 1-based line number in the source file, used to write an edited value back in place.
     pub line: usize,
+    pub format: SourceFormat,
+    /// Trailing `-- ...` comment on the definition line. Only ever populated for `Lua`
+    /// variables; `.conf` `$VAR = value` lines have no comment syntax of their own.
+    pub comment: Option<String>,
 }
 
 /// A single parsed keybinding line, e.g. `bind = $mainMod, Q, killactive # Kill active window`.
@@ -27,12 +43,31 @@ pub struct Shortcut {
     /// The exact, unmodified source line this shortcut was parsed from.
     pub raw: String,
 
-    /// The mods field exactly as written, e.g. "$mainMod SHIFT" rather than "SUPER SHIFT".
+    /// The mods field exactly as written, e.g. "$mainMod SHIFT" rather than "SUPER SHIFT". For a
+    /// `Lua`-format shortcut, a variable reference (e.g. Lua's `mainMod ..`) is written using the
+    /// same `$mainMod`-style marker as `.conf`, even though the source syntax has no `$` of its
+    /// own; it's hyprbind's own convention, kept consistent across both formats so editing looks
+    /// and works the same regardless of which file a shortcut came from.
     pub mods_raw: String,
     pub key_raw: String,
     pub description_raw: Option<String>,
     pub dispatcher_raw: String,
     pub args_raw: String,
+
+    pub format: SourceFormat,
+    /// `Lua`-format only: the raw text of `hl.bind`'s third argument (the options table),
+    /// verbatim including its braces, e.g. `{ mouse = true, description = "..." }`. Neither `e`
+    /// nor `a` editing touches this, so it's carried through unchanged on every rebuild. `None`
+    /// for `.conf` shortcuts, and for a Lua `hl.bind` call with no options table at all.
+    pub options_raw: Option<String>,
+}
+
+/// The result of parsing a Hyprland keybindings file (either syntax): its shortcuts plus the
+/// variable definitions used to resolve them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ParsedConfig {
+    pub shortcuts: Vec<Shortcut>,
+    pub variables: Vec<Variable>,
 }
 
 impl Shortcut {
@@ -103,10 +138,19 @@ impl Shortcut {
         self.build_line(&self.mods_raw, &self.key_raw, dispatcher_raw, args_raw)
     }
 
-    /// Rebuild the full source line from its fields, normalizing separators to a consistent
+    /// Rebuild the full source line from its fields. Dispatches on `format`, since `.conf` and
+    /// Lua need entirely different syntax to say the same thing.
+    fn build_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str, args_raw: &str) -> String {
+        match self.format {
+            SourceFormat::Conf => self.build_conf_line(mods_raw, key_raw, dispatcher_raw, args_raw),
+            SourceFormat::Lua => self.build_lua_line(mods_raw, key_raw, dispatcher_raw),
+        }
+    }
+
+    /// Rebuild a `.conf` source line, normalizing separators to a consistent
     /// `field, field, ... # comment` style. This discards any original column-alignment padding
     /// around commas or before the comment; field content itself is always preserved exactly.
-    fn build_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str, args_raw: &str) -> String {
+    fn build_conf_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str, args_raw: &str) -> String {
         let mut fields = vec![mods_raw.to_string(), key_raw.to_string()];
         if let Some(description) = &self.description_raw {
             fields.push(description.clone());
@@ -119,6 +163,23 @@ impl Shortcut {
         let mut line = format!("{} = {}", self.bind_type, fields.join(", "));
         if let Some(comment) = &self.comment {
             line.push_str(" # ");
+            line.push_str(comment);
+        }
+        line
+    }
+
+    /// Rebuild an `hl.bind(...)` source line. `dispatcher_raw` is used verbatim as the call's
+    /// second argument (Lua shortcuts have no separate args field; see `options_raw` on the
+    /// struct), and the options table, if any, is carried through unchanged since editing never
+    /// touches it.
+    fn build_lua_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str) -> String {
+        let key_expr = lua_key_expr(mods_raw, key_raw);
+        let mut line = match &self.options_raw {
+            Some(options) => format!("hl.bind({key_expr}, {dispatcher_raw}, {options})"),
+            None => format!("hl.bind({key_expr}, {dispatcher_raw})"),
+        };
+        if let Some(comment) = &self.comment {
+            line.push_str(" -- ");
             line.push_str(comment);
         }
         line
@@ -167,6 +228,31 @@ impl Shortcut {
     }
 }
 
+/// Build a Lua `hl.bind` key-expression string from raw mods/key text, using the `$mainMod`-style
+/// marker convention (see `Shortcut::mods_raw`) to decide whether to emit a variable
+/// concatenation or a plain literal string.
+///
+/// Only the *first* mods token is ever treated as a variable reference — the only form actually
+/// used by `hl.bind` calls in practice (e.g. `mainMod .. " + SHIFT"`). Any `$` elsewhere in the
+/// text is stripped rather than trusted, so a stray one can't produce invalid Lua.
+fn lua_key_expr(mods_raw: &str, key_raw: &str) -> String {
+    let mut tokens = mods_raw.split_whitespace();
+    if let Some(var_name) = tokens.next().and_then(|first| first.strip_prefix('$')) {
+        let rest: Vec<String> = tokens
+            .map(|t| t.trim_start_matches('$').to_string())
+            .chain(std::iter::once(key_raw.trim_start_matches('$').to_string()))
+            .collect();
+        return format!("{var_name} .. \" + {}\"", rest.join(" + "));
+    }
+
+    let all: Vec<String> = mods_raw
+        .split_whitespace()
+        .map(|t| t.trim_start_matches('$').to_string())
+        .chain(std::iter::once(key_raw.trim_start_matches('$').to_string()))
+        .collect();
+    format!("\"{}\"", all.join(" + "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -188,6 +274,30 @@ mod tests {
             description_raw: None,
             dispatcher_raw: "exec".to_string(),
             args_raw: "$HYPRSCRIPTS/toggle-animations.sh".to_string(),
+            format: SourceFormat::Conf,
+            options_raw: None,
+        }
+    }
+
+    fn lua_shortcut() -> Shortcut {
+        Shortcut {
+            bind_type: "hl.bind".to_string(),
+            mods: vec!["SUPER".to_string()],
+            key: "RETURN".to_string(),
+            description: Some("Open the terminal".to_string()),
+            dispatcher: "hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\")".to_string(),
+            args: String::new(),
+            comment: None,
+            line: 1,
+            raw: "hl.bind(mainMod .. \" + RETURN\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"
+                .to_string(),
+            mods_raw: "$mainMod".to_string(),
+            key_raw: "RETURN".to_string(),
+            description_raw: Some("Open the terminal".to_string()),
+            dispatcher_raw: "hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\")".to_string(),
+            args_raw: String::new(),
+            format: SourceFormat::Lua,
+            options_raw: Some("{ description = \"Open the terminal\" }".to_string()),
         }
     }
 
@@ -310,5 +420,51 @@ mod tests {
     fn matches_combo_false_for_different_key_or_mods() {
         assert!(!shortcut().matches_combo(&["SUPER".to_string(), "SHIFT".to_string()], "B"));
         assert!(!shortcut().matches_combo(&["SUPER".to_string()], "A"));
+    }
+
+    #[test]
+    fn lua_with_key_rebuilds_the_variable_concatenation_and_keeps_options_and_dispatcher() {
+        let updated = lua_shortcut().with_key("$mainMod SHIFT", "B");
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + SHIFT + B\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"
+        );
+    }
+
+    #[test]
+    fn lua_with_key_drops_to_a_literal_string_when_the_variable_marker_is_removed() {
+        let updated = lua_shortcut().with_key("SUPER SHIFT", "B");
+        assert_eq!(
+            updated,
+            "hl.bind(\"SUPER + SHIFT + B\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"
+        );
+    }
+
+    #[test]
+    fn lua_with_target_replaces_only_the_dispatcher_expression() {
+        let updated = lua_shortcut().with_target("hl.dsp.exec_cmd(\"~/new-script.sh\")", "");
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + RETURN\", hl.dsp.exec_cmd(\"~/new-script.sh\"), { description = \"Open the terminal\" })"
+        );
+    }
+
+    #[test]
+    fn lua_with_key_omits_the_options_table_when_the_source_had_none() {
+        let mut s = lua_shortcut();
+        s.options_raw = None;
+        let updated = s.with_key("$mainMod", "Q");
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + Q\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"))"
+        );
+    }
+
+    #[test]
+    fn lua_with_key_appends_a_trailing_comment_when_present() {
+        let mut s = lua_shortcut();
+        s.comment = Some("Launch terminal".to_string());
+        let updated = s.with_key("$mainMod", "RETURN");
+        assert!(updated.ends_with(" -- Launch terminal"));
     }
 }

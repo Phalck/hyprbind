@@ -3,9 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A terminal UI for viewing and editing Hyprland keyboard shortcuts. It works
-directly with Hyprland's own `bind` config syntax, not a distribution- or
-framework-specific format, so parsing and editing shortcuts works on any
-Hyprland setup, on any distribution.
+directly with Hyprland's own `bind` config syntax and with ML4W's Lua
+keybinding DSL, not a distribution-specific format, so parsing and editing
+shortcuts works on any Hyprland setup, on any distribution.
 
 ## What it does
 
@@ -18,20 +18,34 @@ used by the ML4W (My Linux 4 Wayland) dotfiles framework:
 
 If that's not there, it searches `~/.config/hypr` — the one location every
 Hyprland install has, regardless of distribution or dotfiles framework — for
-whichever `.conf` file has the most recognizable shortcuts in it, and uses
-that instead. See [Keybindings file location](#keybindings-file-location)
-below for how this works and how to point it somewhere else entirely.
+whichever `.conf` or `.lua` file has the most recognizable shortcuts in it,
+and uses that instead. See
+[Keybindings file location](#keybindings-file-location) below for how this
+works and how to point it somewhere else entirely.
 
-It understands the `bind` directive family used in that file (`bind`, `bindd`,
-`binde`, `bindm`, `bindle`, and similar variants), resolves `$VAR` references
-such as `$mainMod`, and pulls out each binding's modifiers, key, dispatcher,
+Two source syntaxes are understood:
+
+- **`.conf`** — the `bind` directive family (`bind`, `bindd`, `binde`,
+  `bindm`, `bindle`, and similar variants), with `$VAR` references such as
+  `$mainMod` resolved.
+- **Lua** (`default.lua`) — ML4W's `hl.bind(key_expr, dispatcher_expr, {
+  options })` calls, with a local variable used in the key expression (e.g.
+  `mainMod .. " + SHIFT + Q"`) resolved the same way `$mainMod` is for
+  `.conf`. Only single-line `hl.bind` calls are parsed; anything generated
+  inside a `for` loop (e.g. ML4W's default per-workspace bindings) is skipped,
+  since there's no single static line to edit or write back to.
+
+Either way, hyprbind pulls out each binding's modifiers, key, dispatcher,
 arguments, and description or trailing comment. The result is shown as a
 scrollable, searchable table so you can see every shortcut at a glance.
 
-Shortcuts can be edited in place: the change is written straight back to that
-same line in the source file, with everything else in the file left
-untouched. hyprbind does not yet parse the alternate Lua keybinding format
-(`default.lua`).
+Shortcuts can be edited in place: the change is written straight back to
+that same line in the source file — in whichever syntax it was written in —
+with everything else in the file left untouched. Saving and applying
+templates (`t`/`l`, see [Templates](#templates)) is `.conf`-syntax only for
+now: there's no reliable way to translate an arbitrary Lua `hl.dsp....`
+dispatcher call into a Hyprland `.conf` dispatcher, or back, so hyprbind
+refuses rather than risk writing something broken.
 
 ## Requirements
 
@@ -171,8 +185,9 @@ At startup, hyprbind picks a keybindings file to use in three steps:
    [Persisted settings](#persisted-settings) below), if any.
 2. Otherwise, try the ML4W default path (see [What it does](#what-it-does)).
 3. If that's missing or has no shortcuts in it either, search
-   `~/.config/hypr` recursively for `.conf` files, parse each one, and
-   switch to whichever has the most recognizable shortcuts. This follows
+   `~/.config/hypr` recursively for `.conf` and `.lua` files, parse each
+   one, and switch to whichever has the most recognizable shortcuts. This
+   follows
    symlinked directories (so dotfiles managers that populate
    `~/.config/hypr` via symlinks, including ML4W's own, still resolve
    correctly) but is cycle-safe. If this finds a file, the status line
@@ -271,18 +286,22 @@ skipped.
 
 ## Development
 
-Run the test suite, which covers the keybinding parser against representative
-`bind`/`bindd`/`binde` lines, variable substitution, edge cases like function
-keys with no modifiers, search matching, the line-splicing logic used to
-write an edit back to the file, template save/list/append helpers, the
-keybindings-file auto-detection scan (including symlink-cycle safety), the
-persisted-settings file (parsing, round-tripping, and the app-level
-integration that writes it on a successful `S`/`T`/`B`), backup/restore
-(byte-for-byte copy on backup, atomic overwrite plus reload on restore, and
-failure handling for both), and duplicate-key detection (no self-conflict on
-an unchanged combo, `$VAR` resolution when comparing, the fix search finding
-or failing to find an unused modifier, and both outcomes of the confirm
-screen):
+Run the test suite, which covers the `.conf` keybinding parser against
+representative `bind`/`bindd`/`binde` lines, the Lua parser against
+representative `hl.bind` calls (literal and variable-concatenated key
+expressions, nested dispatcher-table arguments, `for`-loop skipping, and
+`local` variable capture), variable substitution in both formats, edge cases
+like function keys with no modifiers, search matching, the line-splicing
+logic used to write an edit back to the file in either syntax, template
+save/list/append helpers (and the guard that refuses to save or apply a
+template against a Lua source), the keybindings-file auto-detection scan
+(including symlink-cycle safety), the persisted-settings file (parsing,
+round-tripping, and the app-level integration that writes it on a successful
+`S`/`T`/`B`), backup/restore (byte-for-byte copy on backup, atomic overwrite
+plus reload on restore, and failure handling for both), and duplicate-key
+detection (no self-conflict on an unchanged combo, variable resolution when
+comparing, the fix search finding or failing to find an unused modifier, and
+both outcomes of the confirm screen):
 
 ```sh
 cargo test
@@ -304,7 +323,8 @@ src/
   config.rs             reads/writes ~/.config/hyprbind/config
   fs_util.rs            shared atomic-write helper
   keybindings/
-    model.rs             the Shortcut data type
+    model.rs             the Shortcut data type, shared by both source formats
     parser.rs             parses a Hyprland keybindings .conf file
+    lua_parser.rs          parses ML4W's Lua keybinding format (default.lua)
     discover.rs           searches ~/.config/hypr for the keybindings file
 ```

@@ -8,7 +8,7 @@ use ratatui::widgets::TableState;
 
 use crate::config::{self, Settings};
 use crate::fs_util::write_atomic;
-use crate::keybindings::{self, Shortcut, Variable};
+use crate::keybindings::{self, Shortcut, SourceFormat, Variable};
 
 const TEMPLATE_EXTENSION: &str = "hbt";
 const BACKUP_EXTENSION: &str = "hbb";
@@ -496,7 +496,16 @@ impl App {
                 shortcut.with_target(dispatcher_raw, args_raw)
             }),
             Mode::EditMainMod => self.variables.iter().find(|v| v.line == line_no).map(|variable| {
-                format!("${} = {}", variable.name, self.edit_buffer.trim())
+                let value = self.edit_buffer.trim();
+                let mut line = match variable.format {
+                    SourceFormat::Conf => format!("${} = {value}", variable.name),
+                    SourceFormat::Lua => format!("local {} = \"{value}\"", variable.name),
+                };
+                if let Some(comment) = &variable.comment {
+                    line.push_str(" -- ");
+                    line.push_str(comment);
+                }
+                line
             }),
             _ => None,
         };
@@ -707,6 +716,14 @@ impl App {
         self.mode = Mode::Normal;
     }
 
+    /// Which keybinding syntax `source_path` is in. Template save/apply is `.conf`-syntax only
+    /// (see `start_template_save_select` and `apply_template_selection`), since there's no
+    /// reliable way to translate an arbitrary Lua `hl.dsp....` dispatcher call into a Hyprland
+    /// `.conf` dispatcher, or vice versa.
+    fn source_format(&self) -> SourceFormat {
+        keybindings::format_for_path(&self.source_path)
+    }
+
     // ---- Template folder ----------------------------------------------------------------
 
     pub fn start_edit_template_folder(&mut self) {
@@ -746,6 +763,12 @@ impl App {
 
     /// Snapshot the currently visible shortcuts and open the save-template picker.
     pub fn start_template_save_select(&mut self) {
+        if self.source_format() == SourceFormat::Lua {
+            self.set_status(
+                "Saving templates isn't supported yet for Lua-format keybinding files.".to_string(),
+            );
+            return;
+        }
         self.clear_status();
         self.template_candidates = self.visible().into_iter().cloned().collect();
         self.template_selected.clear();
@@ -881,6 +904,13 @@ impl App {
     /// Append the checked shortcuts to `source_path`, skipping any that would collide with an
     /// existing shortcut's key combo.
     pub fn apply_template_selection(&mut self) {
+        if self.source_format() == SourceFormat::Lua {
+            self.set_status(
+                "Applying templates isn't supported yet for Lua-format keybinding files.".to_string(),
+            );
+            self.cancel_template();
+            return;
+        }
         if self.template_selected.is_empty() {
             self.set_status("Select at least one shortcut to apply (Space to toggle).".to_string());
             return;
@@ -1609,6 +1639,8 @@ mod tests {
             description_raw: None,
             dispatcher_raw: "exec".to_string(),
             args_raw: "foo".to_string(),
+            format: keybindings::SourceFormat::Conf,
+            options_raw: None,
         }
     }
 
@@ -1640,6 +1672,61 @@ mod tests {
         assert!(contents.lines().next().unwrap().contains(", E,"));
 
         fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_editkey_on_a_lua_source_rewrites_the_hl_bind_call_in_place() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-lua-editkey-{}.lua", std::process::id()));
+        fs::write(
+            &source,
+            "local mainMod = \"SUPER\"\nhl.bind(mainMod .. \" + Q\", hl.dsp.exec_cmd(\"kill.sh\"), { description = \"Kill\" })\n",
+        )
+        .unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.load();
+        assert_eq!(app.shortcuts.len(), 1);
+        app.table_state.select_first();
+
+        app.start_edit_key();
+        app.edit_buffer = "$mainMod SHIFT, E".to_string();
+        app.edit_cursor = app.edit_buffer.chars().count();
+
+        app.save_edit();
+
+        assert_eq!(app.status.as_deref(), Some("Saved."));
+        let contents = fs::read_to_string(&source).unwrap();
+        assert!(
+            contents.contains("hl.bind(mainMod .. \" + SHIFT + E\", hl.dsp.exec_cmd(\"kill.sh\"), { description = \"Kill\" })"),
+            "unexpected contents: {contents}"
+        );
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn start_template_save_select_is_blocked_for_a_lua_source() {
+        let mut app = edit_app();
+        app.mode = Mode::Normal;
+        app.source_path = PathBuf::from("/some/default.lua");
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.start_template_save_select();
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
+    }
+
+    #[test]
+    fn apply_template_selection_is_blocked_for_a_lua_source() {
+        let mut app = edit_app();
+        app.source_path = PathBuf::from("/some/default.lua");
+        app.mode = Mode::TemplatePreview;
+        app.template_candidates = vec![sample_shortcut(1, "Q")];
+        app.template_selected.insert(1);
+        app.apply_template_selection();
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
     }
 
     #[test]
@@ -1713,6 +1800,8 @@ mod tests {
             name: "mainMod".to_string(),
             value: "SUPER".to_string(),
             line: 1,
+            format: SourceFormat::Conf,
+            comment: None,
         }];
         app.shortcuts = vec![
             shortcut_with_mods(2, &["SUPER"], "Q"),

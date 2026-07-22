@@ -1,29 +1,12 @@
 use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::Path;
 
-use super::model::{Shortcut, Variable};
-
-/// The result of parsing a Hyprland keybindings `.conf` file: its shortcuts plus the `$VAR`
-/// definitions used to resolve them.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ParsedConfig {
-    pub shortcuts: Vec<Shortcut>,
-    pub variables: Vec<Variable>,
-}
-
-/// Parse a Hyprland keybindings `.conf` file (e.g. `default.conf`).
-pub fn parse_file(path: impl AsRef<Path>) -> io::Result<ParsedConfig> {
-    let contents = fs::read_to_string(path)?;
-    Ok(parse_str(&contents))
-}
+use super::model::{ParsedConfig, Shortcut, SourceFormat, Variable};
 
 /// Parse the contents of a Hyprland keybindings `.conf` file.
 ///
 /// Handles `$VAR = value` substitution and the `bind`/`bindd`/`binde`/`bindm`/`bindle`/...
-/// directive family. Full-line comments and blank lines are skipped. Does not understand the
-/// Lua keybinding format (`default.lua`).
+/// directive family. Full-line comments and blank lines are skipped. See `lua_parser` for the
+/// alternate Lua keybinding format (`default.lua`).
 pub fn parse_str(contents: &str) -> ParsedConfig {
     let mut vars: HashMap<String, String> = HashMap::new();
     let mut variables = Vec::new();
@@ -42,7 +25,13 @@ pub fn parse_str(contents: &str) -> ParsedConfig {
                 let name = name.trim().to_string();
                 let value = value.trim().to_string();
                 vars.insert(format!("${name}"), value.clone());
-                variables.push(Variable { name, value, line: line_no });
+                variables.push(Variable {
+                    name,
+                    value,
+                    line: line_no,
+                    format: SourceFormat::Conf,
+                    comment: None,
+                });
             }
             continue;
         }
@@ -123,6 +112,8 @@ fn parse_bind_line(
         description_raw,
         dispatcher_raw,
         args_raw,
+        format: SourceFormat::Conf,
+        options_raw: None,
     })
 }
 
@@ -202,11 +193,15 @@ mod tests {
                     name: "mainMod".to_string(),
                     value: "SUPER".to_string(),
                     line: 1,
+                    format: SourceFormat::Conf,
+                    comment: None,
                 },
                 Variable {
                     name: "HYPRSCRIPTS".to_string(),
                     value: "~/.config/hypr/scripts".to_string(),
                     line: 2,
+                    format: SourceFormat::Conf,
+                    comment: None,
                 },
             ]
         );

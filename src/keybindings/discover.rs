@@ -3,15 +3,16 @@ use std::path::{Path, PathBuf};
 
 use super::parse_file;
 
-/// Search `root` (recursively) for `.conf` files containing Hyprland `bind` lines, and return
-/// whichever has the most, as a best guess for "the" keybindings file.
+/// Search `root` (recursively) for `.conf` or `.lua` files containing Hyprland `bind` lines
+/// (either syntax), and return whichever has the most, as a best guess for "the" keybindings
+/// file.
 ///
 /// This makes no assumption about which dotfiles framework (if any) is in use: it just looks
 /// for the file with the most recognizable shortcuts under the one location every Hyprland
 /// install has, regardless of distribution.
 pub fn discover(root: &Path) -> Option<PathBuf> {
     let mut visited = HashSet::new();
-    conf_files(root, 6, &mut visited)
+    keybinding_files(root, 6, &mut visited)
         .into_iter()
         .filter_map(|path| {
             let count = parse_file(&path).ok()?.shortcuts.len();
@@ -21,10 +22,10 @@ pub fn discover(root: &Path) -> Option<PathBuf> {
         .map(|(path, _)| path)
 }
 
-/// Collect every `.conf` file under `dir`, following symlinked directories (several dotfiles
-/// managers populate `~/.config/hypr` entirely via symlinks) but guarding against cycles via a
-/// canonicalized-path visited set, plus a depth cap as a second safety net.
-fn conf_files(dir: &Path, depth_remaining: u32, visited: &mut HashSet<PathBuf>) -> Vec<PathBuf> {
+/// Collect every `.conf` or `.lua` file under `dir`, following symlinked directories (several
+/// dotfiles managers populate `~/.config/hypr` entirely via symlinks) but guarding against
+/// cycles via a canonicalized-path visited set, plus a depth cap as a second safety net.
+fn keybinding_files(dir: &Path, depth_remaining: u32, visited: &mut HashSet<PathBuf>) -> Vec<PathBuf> {
     if depth_remaining == 0 {
         return Vec::new();
     }
@@ -42,8 +43,8 @@ fn conf_files(dir: &Path, depth_remaining: u32, visited: &mut HashSet<PathBuf>) 
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
-            files.extend(conf_files(&path, depth_remaining - 1, visited));
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("conf") {
+            files.extend(keybinding_files(&path, depth_remaining - 1, visited));
+        } else if matches!(path.extension().and_then(|ext| ext.to_str()), Some("conf") | Some("lua")) {
             files.push(path);
         }
     }
@@ -86,6 +87,22 @@ mod tests {
         .unwrap();
 
         assert_eq!(discover(&root), Some(big));
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn finds_a_lua_keybindings_file() {
+        let root = scratch_dir("lua");
+        fs::create_dir_all(&root).unwrap();
+        let file = root.join("default.lua");
+        fs::write(
+            &file,
+            "hl.bind(\"CTRL + ALT + T\", hl.dsp.exec_cmd(\"x\"), { description = \"y\" })\n",
+        )
+        .unwrap();
+
+        assert_eq!(discover(&root), Some(file));
 
         fs::remove_dir_all(&root).unwrap();
     }
