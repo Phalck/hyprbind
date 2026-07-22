@@ -5,13 +5,18 @@ use std::path::{Path, PathBuf};
 use crate::fs_util::write_atomic;
 
 /// Settings that persist between runs, stored as simple `key = value` lines (not a real config
-/// format like TOML — there are only two settings, and the app already hand-rolls a parser for
-/// Hyprland's own `key = value`-shaped syntax, so a second one here is a handful of lines).
+/// format like TOML — there are only a handful of settings, and the app already hand-rolls a
+/// parser for Hyprland's own `key = value`-shaped syntax, so a second one here is a handful of
+/// lines).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub source_path: Option<PathBuf>,
     pub template_folder: Option<PathBuf>,
     pub backup_folder: Option<PathBuf>,
+    /// The program (and any fixed arguments) used to open a terminal, e.g. "kitty" or
+    /// "alacritty --hold". A `String` rather than a `PathBuf`: it can carry extra arguments, and
+    /// is usually just a bare program name resolved against `$PATH`, not a path of its own.
+    pub terminal_command: Option<String>,
 }
 
 /// `~/.config/hyprbind/config`.
@@ -48,6 +53,7 @@ fn parse(contents: &str) -> Settings {
             "source_path" => settings.source_path = Some(PathBuf::from(value)),
             "template_folder" => settings.template_folder = Some(PathBuf::from(value)),
             "backup_folder" => settings.backup_folder = Some(PathBuf::from(value)),
+            "terminal_command" => settings.terminal_command = Some(value.to_string()),
             _ => {}
         }
     }
@@ -70,6 +76,9 @@ pub fn save_to(path: &Path, settings: &Settings) -> io::Result<()> {
     if let Some(backup_folder) = &settings.backup_folder {
         contents.push_str(&format!("backup_folder = {}\n", backup_folder.display()));
     }
+    if let Some(terminal_command) = &settings.terminal_command {
+        contents.push_str(&format!("terminal_command = {terminal_command}\n"));
+    }
 
     write_atomic(path, &contents)
 }
@@ -90,11 +99,13 @@ source_path = /home/me/.config/hypr/binds.conf
 
 template_folder = /home/me/Templates
 backup_folder = /home/me/Backups
+terminal_command = kitty --hold
 ";
         let settings = parse(contents);
         assert_eq!(settings.source_path, Some(PathBuf::from("/home/me/.config/hypr/binds.conf")));
         assert_eq!(settings.template_folder, Some(PathBuf::from("/home/me/Templates")));
         assert_eq!(settings.backup_folder, Some(PathBuf::from("/home/me/Backups")));
+        assert_eq!(settings.terminal_command, Some("kitty --hold".to_string()));
     }
 
     #[test]
@@ -119,6 +130,7 @@ backup_folder = /home/me/Backups
             source_path: Some(PathBuf::from("/a/b/binds.conf")),
             template_folder: Some(PathBuf::from("/a/b/templates")),
             backup_folder: Some(PathBuf::from("/a/b/backups")),
+            terminal_command: Some("alacritty".to_string()),
         };
 
         save_to(&path, &settings).unwrap();
@@ -135,6 +147,7 @@ backup_folder = /home/me/Backups
             source_path: Some(PathBuf::from("/x")),
             template_folder: None,
             backup_folder: None,
+            terminal_command: None,
         };
 
         save_to(&path, &settings).unwrap();
@@ -152,6 +165,7 @@ backup_folder = /home/me/Backups
             source_path: Some(PathBuf::from("/only/source")),
             template_folder: None,
             backup_folder: None,
+            terminal_command: None,
         };
 
         save_to(&path, &settings).unwrap();

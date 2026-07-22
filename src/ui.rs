@@ -15,7 +15,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         | Mode::SourcePath
         | Mode::TemplateFolder
         | Mode::TemplateSaveName
-        | Mode::BackupFolder => 2,
+        | Mode::BackupFolder
+        | Mode::TerminalCommand => 2,
         Mode::Normal
         | Mode::Search
         | Mode::TemplateSaveSelect
@@ -90,7 +91,7 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
     match mode {
         Mode::Normal => (
             "Browse",
-            "select a shortcut, then e/a/E to edit or t/l for templates",
+            "select a shortcut, then e/a/E to edit, o to open its script's folder, or t/l for templates",
         ),
         Mode::Search => (
             "Search",
@@ -137,6 +138,10 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
             "set where backups are saved to and restored from",
         ),
         Mode::BackupList => ("Restore backup", "pick a .hbb file to restore"),
+        Mode::TerminalCommand => (
+            "Terminal command",
+            "set the program (and any fixed arguments) used to open a terminal",
+        ),
         Mode::BackupConfirm => (
             "Confirm restore",
             "overwrite the current keybindings file with this backup",
@@ -392,6 +397,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             "Space toggle   Enter apply   Esc cancel   ↑/k ↓/j move",
         )],
         Mode::BackupFolder => edit_footer_lines("backup folder", app),
+        Mode::TerminalCommand => edit_footer_lines("terminal command", app),
         Mode::BackupList => vec![Line::from("Enter select   Esc cancel   ↑/k ↓/j move")],
         Mode::BackupConfirm => vec![Line::from("Enter restore   Esc cancel")],
         Mode::DuplicateKeyConfirm => vec![Line::from(if app.duplicate_fix_display.is_some() {
@@ -410,11 +416,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
                 Line::from(
-                    "/ search   e edit key   a edit target   E edit $mainMod   t save template   l load template   T template folder   S keybindings file   b backup   r restore   B backup folder   ↑/k ↓/j move   q quit",
+                    "/ search   e edit key   a edit target   E edit $mainMod   o open terminal   t save template   l load template   T template folder   S keybindings file   b backup   r restore   B backup folder   O terminal command   ↑/k ↓/j move   q quit",
                 )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   t/l templates   S file   b/r/B backup   ↑/k ↓/j move   q quit",
+                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   o terminal   t/l templates   S file   b/r/B backup   O term. cmd.   ↑/k ↓/j move   q quit",
                     app.query
                 ))
             };

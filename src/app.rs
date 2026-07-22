@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use ratatui::widgets::TableState;
@@ -61,6 +62,59 @@ fn expand_home(input: &str) -> PathBuf {
     }
 }
 
+/// Common terminal emulators to look for on `$PATH`, in preference order, when nothing more
+/// specific (`$TERMINAL`, a persisted setting) says which one to use.
+const CANDIDATE_TERMINALS: [&str; 6] = ["kitty", "alacritty", "wezterm", "foot", "konsole", "xterm"];
+
+/// Pick a default terminal command: `$TERMINAL` if it's set to something non-empty, otherwise
+/// the first of `CANDIDATE_TERMINALS` found as a file in some `$PATH` entry. `None` if neither
+/// turns up anything, in which case `o` tells the user to set one with `O` instead of guessing.
+fn detect_terminal() -> Option<String> {
+    if let Ok(term) = std::env::var("TERMINAL")
+        && !term.trim().is_empty()
+    {
+        return Some(term);
+    }
+
+    let path_var = std::env::var_os("PATH")?;
+    CANDIDATE_TERMINALS
+        .into_iter()
+        .find(|candidate| std::env::split_paths(&path_var).any(|dir| dir.join(candidate).is_file()))
+        .map(String::from)
+}
+
+/// If `command` looks like it runs a script — any whitespace-separated token, `~`-expanded,
+/// resolves to an existing file on disk — the parent directory of the first such token. Handles
+/// both a script run directly (`~/foo.sh`) and one run through an interpreter (`bash ~/foo.sh`,
+/// where the first token isn't a path at all). Returns `None` for a command with no file token,
+/// e.g. a pipeline of system commands like `hyprctl activewindow | grep pid | xargs kill`.
+fn script_directory(command: &str) -> Option<PathBuf> {
+    command
+        .split_whitespace()
+        .map(expand_home)
+        .find(|path| path.is_file())
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+}
+
+/// Launch `command` (a program name plus any fixed arguments, e.g. "kitty --hold") with its
+/// working directory set to `dir`, detached from hyprbind's own stdio so it can't write into the
+/// running TUI. Fire-and-forget: never waited on, so the event loop isn't blocked while the
+/// terminal stays open.
+fn spawn_terminal(command: &str, dir: &Path) -> io::Result<()> {
+    let mut parts = command.split_whitespace();
+    let program = parts
+        .next()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty terminal command"))?;
+    std::process::Command::new(program)
+        .args(parts)
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -85,6 +139,8 @@ pub enum Mode {
     TemplatePreview,
     /// Editing the backup save/restore folder.
     BackupFolder,
+    /// Editing the terminal command used by `o` (open a terminal at a shortcut's script).
+    TerminalCommand,
     /// Picking which `.hbb` file to restore.
     BackupList,
     /// Confirming a restore before it overwrites the keybindings file.
@@ -151,6 +207,12 @@ pub struct App {
     /// The backup picked in `Mode::BackupList`, awaiting confirmation in `Mode::BackupConfirm`.
     pub backup_selected_path: Option<PathBuf>,
 
+    /// The program (and any fixed arguments) `o` uses to open a terminal, e.g. "kitty" or
+    /// "alacritty --hold". `None` if nothing was persisted and auto-detection (`$TERMINAL`, then
+    /// a `$PATH` scan for common terminals) came up empty too — `o` then tells the user to set
+    /// one with `O` rather than trying to run a program that doesn't exist.
+    pub terminal_command: Option<String>,
+
     /// The other shortcut a `Mode::EditKey` save collided with, pending confirmation in
     /// `Mode::DuplicateKeyConfirm`.
     pub duplicate_conflict_line: Option<usize>,
@@ -200,6 +262,7 @@ impl App {
             backup_files: Vec::new(),
             backup_table_state: TableState::default(),
             backup_selected_path: None,
+            terminal_command: settings.terminal_command.clone().or_else(detect_terminal),
             duplicate_conflict_line: None,
             duplicate_attempted_combo: String::new(),
             duplicate_fix_display: None,
@@ -305,6 +368,7 @@ impl App {
             source_path: Some(self.source_path.clone()),
             template_folder: Some(self.template_folder.clone()),
             backup_folder: Some(self.backup_folder.clone()),
+            terminal_command: self.terminal_command.clone(),
         };
         config::save_to(&self.config_path, &settings)
     }
@@ -1122,6 +1186,68 @@ impl App {
         self.backup_selected_path = None;
         self.mode = Mode::Normal;
     }
+
+    // ---- Terminal command ----------------------------------------------------------------
+
+    pub fn start_edit_terminal_command(&mut self) {
+        self.clear_status();
+        self.edit_buffer = self.terminal_command.clone().unwrap_or_default();
+        self.edit_cursor = self.edit_buffer.chars().count();
+        self.mode = Mode::TerminalCommand;
+    }
+
+    /// Unlike the keybindings file path, a bad value here is never rejected outright: there's no
+    /// cheap, reliable way to validate an arbitrary command line, so whatever is typed is
+    /// accepted and only found out to be wrong (if it is) when `o` tries to spawn it.
+    pub fn save_terminal_command(&mut self) {
+        let input = self.edit_buffer.trim();
+        if input.is_empty() {
+            self.set_status("Terminal command can't be empty.".to_string());
+            return;
+        }
+        self.terminal_command = Some(input.to_string());
+        let saved = self.persist_settings().is_ok();
+        self.set_status(format!(
+            "Terminal command set to {input}{}",
+            if saved { " (saved)." } else { "." }
+        ));
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::Normal;
+    }
+
+    // ---- Open a terminal at a shortcut's script -------------------------------------------
+
+    /// Open a terminal in the directory containing the script the selected shortcut's action
+    /// runs, if it has one. Reports a specific status message at whichever step comes up empty,
+    /// rather than doing nothing silently: the action isn't `exec`, the command doesn't point at
+    /// a real script, or no terminal command is available to run.
+    pub fn open_terminal_at_script(&mut self) {
+        let Some(idx) = self.table_state.selected() else {
+            return;
+        };
+        let Some(shortcut) = self.visible().get(idx).map(|s| (*s).clone()) else {
+            return;
+        };
+
+        let Some(command) = shortcut.exec_command() else {
+            self.set_status("Not a script: this shortcut doesn't run exec.".to_string());
+            return;
+        };
+        let Some(dir) = script_directory(&command) else {
+            self.set_status("Not a script: couldn't find a script file in this command.".to_string());
+            return;
+        };
+        let Some(terminal_command) = self.terminal_command.clone() else {
+            self.set_status("No terminal command set. Press O to set one.".to_string());
+            return;
+        };
+
+        match spawn_terminal(&terminal_command, &dir) {
+            Ok(()) => self.set_status(format!("Opened a terminal at {}.", dir.display())),
+            Err(err) => self.set_status(format!("Couldn't open a terminal: {err}")),
+        }
+    }
 }
 
 /// Replace line `line_no` (1-based) of `contents` with `new_line`, preserving every other line
@@ -1233,6 +1359,35 @@ mod tests {
         assert_eq!(expand_home("/etc/foo"), PathBuf::from("/etc/foo"));
     }
 
+    #[test]
+    fn script_directory_resolves_a_direct_script_invocation() {
+        let script = std::env::temp_dir()
+            .join(format!("hyprbind-test-script-direct-{}.sh", std::process::id()));
+        fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
+
+        assert_eq!(script_directory(script.to_str().unwrap()), script.parent().map(Path::to_path_buf));
+
+        fs::remove_file(&script).unwrap();
+    }
+
+    #[test]
+    fn script_directory_resolves_a_script_run_through_an_interpreter() {
+        let script = std::env::temp_dir()
+            .join(format!("hyprbind-test-script-interp-{}.sh", std::process::id()));
+        fs::write(&script, "echo hi\n").unwrap();
+        let command = format!("bash {}", script.display());
+
+        assert_eq!(script_directory(&command), script.parent().map(Path::to_path_buf));
+
+        fs::remove_file(&script).unwrap();
+    }
+
+    #[test]
+    fn script_directory_is_none_without_a_file_token() {
+        assert_eq!(script_directory("hyprctl activewindow | grep pid | xargs kill"), None);
+        assert_eq!(script_directory("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), None);
+    }
+
     fn edit_app() -> App {
         App {
             source_path: PathBuf::from("/dev/null"),
@@ -1258,6 +1413,7 @@ mod tests {
             backup_files: Vec::new(),
             backup_table_state: TableState::default(),
             backup_selected_path: None,
+            terminal_command: None,
             duplicate_conflict_line: None,
             duplicate_attempted_combo: String::new(),
             duplicate_fix_display: None,
@@ -1623,6 +1779,33 @@ mod tests {
         fs::remove_file(&config_file).unwrap();
     }
 
+    #[test]
+    fn save_terminal_command_persists_to_config_path() {
+        let config_file = std::env::temp_dir()
+            .join(format!("hyprbind-test-terminal-command-persist-config-{}", std::process::id()));
+
+        let mut app = edit_app();
+        app.config_path = config_file.clone();
+        app.edit_buffer = "alacritty --hold".to_string();
+        app.save_terminal_command();
+
+        assert_eq!(app.terminal_command.as_deref(), Some("alacritty --hold"));
+        let saved = fs::read_to_string(&config_file).unwrap();
+        assert!(saved.contains("terminal_command = alacritty --hold"));
+
+        fs::remove_file(&config_file).unwrap();
+    }
+
+    #[test]
+    fn save_terminal_command_rejects_empty_input() {
+        let mut app = edit_app();
+        app.terminal_command = Some("kitty".to_string());
+        app.edit_buffer = "   ".to_string();
+        app.save_terminal_command();
+        assert_eq!(app.terminal_command.as_deref(), Some("kitty"));
+        assert!(app.status.is_some());
+    }
+
     fn sample_shortcut(line: usize, key: &str) -> Shortcut {
         Shortcut {
             bind_type: "bind".to_string(),
@@ -1727,6 +1910,78 @@ mod tests {
         app.apply_template_selection();
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
+    }
+
+    #[test]
+    fn open_terminal_at_script_reports_a_non_exec_shortcut() {
+        let mut app = edit_app();
+        let mut s = sample_shortcut(1, "Q");
+        s.dispatcher = "killactive".to_string();
+        s.args = String::new();
+        app.shortcuts = vec![s];
+        app.table_state.select(Some(0));
+
+        app.open_terminal_at_script();
+
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("doesn't run exec")));
+    }
+
+    #[test]
+    fn open_terminal_at_script_reports_no_resolvable_script() {
+        let mut app = edit_app();
+        app.shortcuts = vec![sample_shortcut(1, "Q")]; // dispatcher "exec", args "foo" (not a real file)
+        app.table_state.select(Some(0));
+
+        app.open_terminal_at_script();
+
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("couldn't find a script file")));
+    }
+
+    #[test]
+    fn open_terminal_at_script_reports_no_terminal_command_set() {
+        let script = std::env::temp_dir()
+            .join(format!("hyprbind-test-open-terminal-noterm-{}.sh", std::process::id()));
+        fs::write(&script, "echo hi\n").unwrap();
+
+        let mut app = edit_app();
+        let mut s = sample_shortcut(1, "Q");
+        s.args = script.display().to_string();
+        app.shortcuts = vec![s];
+        app.table_state.select(Some(0));
+        app.terminal_command = None;
+
+        app.open_terminal_at_script();
+
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("No terminal command set")));
+
+        fs::remove_file(&script).unwrap();
+    }
+
+    #[test]
+    fn open_terminal_at_script_spawns_the_terminal_command_at_the_scripts_directory() {
+        let script = std::env::temp_dir()
+            .join(format!("hyprbind-test-open-terminal-ok-{}.sh", std::process::id()));
+        fs::write(&script, "echo hi\n").unwrap();
+
+        let mut app = edit_app();
+        let mut s = sample_shortcut(1, "Q");
+        s.args = script.display().to_string();
+        app.shortcuts = vec![s];
+        app.table_state.select(Some(0));
+        // "true" is a real, universally-present no-op binary, so this doesn't need an actual
+        // terminal emulator or a display to run headlessly in a test.
+        app.terminal_command = Some("true".to_string());
+
+        app.open_terminal_at_script();
+
+        let expected_dir = script.parent().unwrap().display().to_string();
+        assert!(
+            app.status.as_deref().is_some_and(|s| s == format!("Opened a terminal at {expected_dir}.")),
+            "unexpected status: {:?}",
+            app.status
+        );
+
+        fs::remove_file(&script).unwrap();
     }
 
     #[test]

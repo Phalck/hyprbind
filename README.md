@@ -74,6 +74,7 @@ cargo run
 | `e` | Edit the selected shortcut's key |
 | `a` | Edit the selected shortcut's target (dispatcher and arguments) |
 | `E` | Edit the `$mainMod` variable's value |
+| `o` | Open a terminal in the directory of the script the selected shortcut runs |
 | `t` | Save shortcuts to a new template |
 | `l` | Load a template |
 | `T` | Set the template folder |
@@ -81,6 +82,7 @@ cargo run
 | `b` | Back up the current keybindings file |
 | `r` | Restore from a backup |
 | `B` | Set the backup folder |
+| `O` | Set the terminal command used by `o` |
 | `q` or Esc | Quit |
 
 The header shows how many shortcuts were loaded and the path they came from,
@@ -177,6 +179,42 @@ references it picks up the new value on the next reload without any of their
 own lines being touched. Whatever shortcut you had selected stays selected
 afterward.
 
+### Opening a shortcut's script
+
+Many shortcuts don't run a command directly — they `exec` a small dispatcher
+script (ML4W's `~/.config/ml4w/settings/*.sh` scripts are a good example: a
+one-line file just naming the actual browser, terminal, etc. to run). `o`
+opens a terminal in the directory containing the script the *selected*
+shortcut runs, so you can read or edit it without leaving hyprbind to go find
+it by hand.
+
+`o` only does something when there's a script to point at:
+
+- The shortcut's action has to be an `exec` (`.conf`'s `exec`/`execr`, or
+  Lua's `hl.dsp.exec_cmd(...)`) — not a window/workspace-management dispatcher
+  or anything else, since those don't run a script at all.
+- At least one whitespace-separated token of the command, after `~`
+  expansion, has to resolve to a real file on disk. This isn't limited to
+  `.sh` files, and it isn't limited to the first token either, so both a
+  script run directly (`~/foo.sh`) and one run through an interpreter (`bash
+  ~/foo.sh`) are found. A system command with no script in it at all (`hyprctl
+  reload`, `wpctl set-volume ...`, a shell pipeline) has no such token, so `o`
+  reports that instead of guessing.
+
+Either way you get a status message explaining what happened — which
+dispatcher it needed, or which directory it opened.
+
+The terminal itself is whatever `terminal_command` is set to: on first run
+this is auto-detected (`$TERMINAL` if it's set, otherwise the first common
+terminal emulator — kitty, alacritty, wezterm, foot, konsole, xterm — found
+on `$PATH`), and can be overridden any time with `O` (same text field as the
+other settings, e.g. `alacritty` or `kitty --hold`). It's launched with its
+working directory set to the script's folder — not by passing it a
+directory flag, so this works the same regardless of which terminal it is —
+detached from hyprbind's own input/output so it can't interfere with the
+running TUI. If nothing was detected and nothing was set, `o` says so and
+points you at `O`.
+
 ### Keybindings file location
 
 At startup, hyprbind picks a keybindings file to use in three steps:
@@ -209,14 +247,15 @@ no way back.
 
 ### Persisted settings
 
-The keybindings file path, the template folder, and the backup folder all
-persist across runs, in `~/.config/hyprbind/config` — a plain `key = value`
-text file, not a structured format like TOML, since there are only three
-settings to store. Every time one is changed successfully (`S`, `T`, or `B`),
-it's written there immediately, and the status line's confirmation gets a
-`(saved)` suffix to confirm it. There's no separate command to edit this
-file's own location or turn persistence off; delete it (or a line from it) to
-reset that setting back to the automatic behavior described above.
+The keybindings file path, the template folder, the backup folder, and the
+terminal command all persist across runs, in `~/.config/hyprbind/config` — a
+plain `key = value` text file, not a structured format like TOML, since
+there are only a handful of settings to store. Every time one is changed
+successfully (`S`, `T`, `B`, or `O`), it's written there immediately, and the
+status line's confirmation gets a `(saved)` suffix to confirm it. There's no
+separate command to edit this file's own location or turn persistence off;
+delete it (or a line from it) to reset that setting back to the automatic
+behavior described above.
 
 ### Backups
 
@@ -297,11 +336,15 @@ save/list/append helpers (and the guard that refuses to save or apply a
 template against a Lua source), the keybindings-file auto-detection scan
 (including symlink-cycle safety), the persisted-settings file (parsing,
 round-tripping, and the app-level integration that writes it on a successful
-`S`/`T`/`B`), backup/restore (byte-for-byte copy on backup, atomic overwrite
-plus reload on restore, and failure handling for both), and duplicate-key
-detection (no self-conflict on an unchanged combo, variable resolution when
-comparing, the fix search finding or failing to find an unused modifier, and
-both outcomes of the confirm screen):
+`S`/`T`/`B`/`O`), backup/restore (byte-for-byte copy on backup, atomic
+overwrite plus reload on restore, and failure handling for both),
+duplicate-key detection (no self-conflict on an unchanged combo, variable
+resolution when comparing, the fix search finding or failing to find an
+unused modifier, and both outcomes of the confirm screen), and `o`'s
+script-detection logic (recognizing `exec`-style dispatchers in both
+formats, resolving a script run directly vs. through an interpreter,
+correctly finding nothing in a system-command pipeline, and the terminal
+actually getting spawned with the right working directory):
 
 ```sh
 cargo test

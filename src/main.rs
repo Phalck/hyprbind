@@ -53,6 +53,8 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('b') => app.create_backup(),
                     KeyCode::Char('r') => app.start_backup_list(),
                     KeyCode::Char('B') => app.start_edit_backup_folder(),
+                    KeyCode::Char('o') => app.open_terminal_at_script(),
+                    KeyCode::Char('O') => app.start_edit_terminal_command(),
                     _ => {}
                 },
                 Mode::Search => match key.code {
@@ -153,6 +155,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Up | KeyCode::Char('k') => app.template_list_select_previous(),
                     KeyCode::Enter => app.open_selected_template(),
                     KeyCode::Esc => app.cancel_template(),
+                    _ => {}
+                },
+                Mode::TerminalCommand => match key.code {
+                    KeyCode::Enter => app.save_terminal_command(),
+                    KeyCode::Esc => app.cancel_edit(),
+                    KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        app.push_edit_char(c);
+                    }
                     _ => {}
                 },
                 Mode::BackupFolder => match key.code {

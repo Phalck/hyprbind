@@ -226,6 +226,23 @@ impl Shortcut {
         b.sort();
         a == b
     }
+
+    /// The literal shell command this shortcut's action runs, if its dispatcher is an
+    /// `exec`-style call: `.conf`'s `exec`/`execr`, or Lua's `hl.dsp.exec_cmd(...)`. `None` for
+    /// any other dispatcher (window/workspace management, etc.), which doesn't run a script
+    /// there could be anything to open a terminal at.
+    pub fn exec_command(&self) -> Option<String> {
+        match self.format {
+            SourceFormat::Conf => {
+                matches!(self.dispatcher.as_str(), "exec" | "execr").then(|| self.args.clone())
+            }
+            SourceFormat::Lua => {
+                let rest = self.dispatcher.trim().strip_prefix("hl.dsp.exec_cmd(")?;
+                let inner = rest.strip_suffix(')')?;
+                Some(inner.strip_prefix('"')?.strip_suffix('"')?.to_string())
+            }
+        }
+    }
 }
 
 /// Build a Lua `hl.bind` key-expression string from raw mods/key text, using the `$mainMod`-style
@@ -466,5 +483,35 @@ mod tests {
         s.comment = Some("Launch terminal".to_string());
         let updated = s.with_key("$mainMod", "RETURN");
         assert!(updated.ends_with(" -- Launch terminal"));
+    }
+
+    #[test]
+    fn exec_command_returns_args_for_a_conf_exec_dispatcher() {
+        let mut s = shortcut();
+        s.dispatcher = "exec".to_string();
+        s.args = "~/.config/hypr/scripts/toggle-animations.sh".to_string();
+        assert_eq!(s.exec_command().as_deref(), Some("~/.config/hypr/scripts/toggle-animations.sh"));
+    }
+
+    #[test]
+    fn exec_command_is_none_for_a_non_exec_conf_dispatcher() {
+        let mut s = shortcut();
+        s.dispatcher = "killactive".to_string();
+        assert_eq!(s.exec_command(), None);
+    }
+
+    #[test]
+    fn exec_command_extracts_the_command_from_a_lua_exec_cmd_call() {
+        assert_eq!(
+            lua_shortcut().exec_command().as_deref(),
+            Some("~/.config/ml4w/settings/terminal.sh")
+        );
+    }
+
+    #[test]
+    fn exec_command_is_none_for_a_non_exec_lua_dispatcher() {
+        let mut s = lua_shortcut();
+        s.dispatcher = "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"toggle\" })".to_string();
+        assert_eq!(s.exec_command(), None);
     }
 }
