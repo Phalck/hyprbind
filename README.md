@@ -175,26 +175,31 @@ with `a` can't create a duplicate, since the key doesn't change.
 
 ### Editing the description
 
-`d` opens the same text field as `e`/`a`, prefilled with the current
-description (empty if there isn't one yet). Empty input is rejected — an
-empty text box just means "no description set," not "clear it" — so save
-something or press Esc to cancel.
+`d` opens the same text field as `e`/`a`, prefilled with whatever the table's
+Description column is already showing for that row — which is usually a
+trailing comment, not a formal description field; see below. Empty input is
+rejected — an empty text box just means "nothing set," not "clear it" — so
+save something or press Esc to cancel.
 
-Unlike the key and target, not every shortcut can take a description:
+Which underlying field actually gets changed depends on what the shortcut
+already has, in the same order the Description column itself prefers:
 
-- **Lua** (`hl.bind`) shortcuts always can. Saving replaces just the quoted
-  value of an existing `description = "..."` entry in the options table if
-  there is one, adds one to the table if there isn't (any other option, e.g.
-  `mouse = true`, is left alone), or creates a fresh options table if the
-  bind had none at all.
-- **`.conf`** shortcuts can if they're a plain `bind` or already a `bindd`.
-  A plain `bind` becomes a `bindd` on save, with the description inserted in
-  its usual field position; an existing `bindd`'s description is just
-  replaced. Any other directive (`binde`, `bindm`, `bindle`, ...) can't —
-  `d` reports this immediately rather than opening a text field that could
-  never be saved, since turning e.g. `binde` into a description-carrying
-  variant would mean guessing the right combined-flag directive name
-  (`bindde`? `binded`?), which hyprbind won't do.
+- If it already has an explicit description — `.conf`'s `bindd` field, or
+  Lua's `description = "..."` entry — that's what gets replaced.
+- Otherwise, its trailing comment (`# ...` for `.conf`, `-- ...` for Lua) is
+  added or replaced instead. This is the common case: most real-world
+  `.conf` keybindings (including ML4W's own defaults) use a plain `bind`
+  with a trailing comment rather than `bindd`, so `d` edits that, not a
+  `bindd` field that doesn't exist. A plain `bind` is never upgraded to
+  `bindd` just to gain a description field — a comment does the same job
+  and every directive (`bind`, `binde`, `bindm`, `bindle`, ...) supports one
+  equally, with no guessing required.
+- For a Lua bind with neither an options table nor a comment yet, a fresh
+  options table is created instead (`{ description = "..." }`), since that's
+  where a real Lua bind's description almost always lives.
+
+Either way, everything else about the line — mods, key, dispatcher,
+arguments, any other option in a Lua table — is left exactly as it was.
 
 ### Editing `$mainMod`
 
@@ -373,11 +378,13 @@ script-detection logic (recognizing `exec`-style dispatchers in both
 formats, resolving a script run directly vs. through an interpreter,
 correctly finding nothing in a system-command pipeline, and the terminal
 actually getting spawned with the right working directory), and `d`'s
-description editing (upgrading a plain `bind` to `bindd` vs. replacing an
-existing `bindd`'s description, refusing an unsupported `.conf` directive,
-and the three Lua cases — replacing an existing `description` entry,
-appending one to a table that has other options but not that one, and
-creating a fresh options table from scratch):
+description editing (falling back to the trailing comment when there's no
+`bindd`/`description` field, same as the table display, for any `.conf`
+directive; replacing an existing `bindd` description without touching its
+comment; and the Lua cases — replacing an existing `description` entry,
+appending one to a table that has other options but not that one, creating a
+fresh options table from scratch, and preferring an existing trailing
+comment over creating one):
 
 ```sh
 cargo test

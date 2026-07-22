@@ -419,28 +419,9 @@ impl App {
         self.start_edit(Mode::EditTarget, |s| s.target_edit_buffer());
     }
 
-    /// Start editing the description of the currently selected shortcut. Refuses immediately
-    /// (status message, no mode change) if `Shortcut::supports_description` says this one can't
-    /// have one — see there for why.
+    /// Start editing the description of the currently selected shortcut.
     pub fn start_edit_description(&mut self) {
-        let Some(idx) = self.table_state.selected() else {
-            return;
-        };
-        let Some(shortcut) = self.visible().get(idx).map(|s| (*s).clone()) else {
-            return;
-        };
-        if !shortcut.supports_description() {
-            self.set_status(format!("Can't add a description to a `{}` bind.", shortcut.bind_type));
-            return;
-        }
-
-        self.clear_status();
-        let buffer = shortcut.description_edit_buffer();
-        self.edit_cursor = buffer.chars().count();
-        self.edit_buffer = buffer;
-        self.editing_line = Some(shortcut.line);
-        self.resume_line = Some(shortcut.line);
-        self.mode = Mode::EditDescription;
+        self.start_edit(Mode::EditDescription, |s| s.description_edit_buffer());
     }
 
     fn start_edit(&mut self, mode: Mode, buffer_for: impl FnOnce(&Shortcut) -> String) {
@@ -594,7 +575,7 @@ impl App {
                 self.shortcuts
                     .iter()
                     .find(|s| s.line == line_no)
-                    .and_then(|shortcut| shortcut.with_description(description))
+                    .map(|shortcut| shortcut.with_description(description))
             }
             Mode::EditMainMod => self.variables.iter().find(|v| v.line == line_no).map(|variable| {
                 let value = self.edit_buffer.trim();
@@ -1954,9 +1935,24 @@ mod tests {
     }
 
     #[test]
-    fn start_edit_description_refuses_for_an_unsupported_conf_bind_type() {
+    fn start_edit_description_prefills_the_comment_when_there_is_no_description_field() {
+        // The common case for real-world .conf files: a plain `bind` with only a trailing
+        // comment, which the table already shows in the "Description" column.
         let mut app = edit_app();
-        app.mode = Mode::Normal;
+        let mut s = sample_shortcut(1, "Q");
+        s.comment = Some("Open the browser".to_string());
+        app.shortcuts = vec![s];
+        app.table_state.select(Some(0));
+
+        app.start_edit_description();
+
+        assert_eq!(app.mode, Mode::EditDescription);
+        assert_eq!(app.edit_buffer, "Open the browser");
+    }
+
+    #[test]
+    fn start_edit_description_works_for_any_conf_bind_type() {
+        let mut app = edit_app();
         let mut s = sample_shortcut(1, "Q");
         s.bind_type = "binde".to_string();
         app.shortcuts = vec![s];
@@ -1964,14 +1960,13 @@ mod tests {
 
         app.start_edit_description();
 
-        assert_eq!(app.mode, Mode::Normal);
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("binde")));
+        assert_eq!(app.mode, Mode::EditDescription);
     }
 
     #[test]
-    fn save_edit_editdescription_upgrades_a_plain_bind_to_bindd_on_disk() {
+    fn save_edit_editdescription_sets_a_comment_on_a_plain_bind_without_upgrading_it() {
         let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-editdescription-upgrade-{}.conf", std::process::id()));
+            .join(format!("hyprbind-test-editdescription-comment-{}.conf", std::process::id()));
         fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -1985,7 +1980,31 @@ mod tests {
 
         assert_eq!(app.status.as_deref(), Some("Saved."));
         let contents = fs::read_to_string(&source).unwrap();
-        assert_eq!(contents, "bindd = $mainMod, Q, Kill active window, exec, foo\n");
+        assert_eq!(contents, "bind = $mainMod, Q, exec, foo # Kill active window\n");
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_editdescription_replaces_an_existing_comment() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-editdescription-replace-comment-{}.conf", std::process::id()));
+        fs::write(&source, "bind = $mainMod, Q, exec, foo # Old comment\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        let mut s = sample_shortcut(1, "Q");
+        s.comment = Some("Old comment".to_string());
+        app.shortcuts = vec![s];
+        app.mode = Mode::EditDescription;
+        app.editing_line = Some(1);
+        app.edit_buffer = "New comment".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.status.as_deref(), Some("Saved."));
+        let contents = fs::read_to_string(&source).unwrap();
+        assert_eq!(contents, "bind = $mainMod, Q, exec, foo # New comment\n");
 
         fs::remove_file(&source).unwrap();
     }
