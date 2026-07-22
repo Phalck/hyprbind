@@ -123,6 +123,8 @@ pub enum Mode {
     EditKey,
     /// Editing the dispatcher/args field of the selected shortcut.
     EditTarget,
+    /// Editing the description of the selected shortcut.
+    EditDescription,
     /// Editing the value of the `$mainMod` variable.
     EditMainMod,
     /// Editing the keybindings file path.
@@ -417,6 +419,30 @@ impl App {
         self.start_edit(Mode::EditTarget, |s| s.target_edit_buffer());
     }
 
+    /// Start editing the description of the currently selected shortcut. Refuses immediately
+    /// (status message, no mode change) if `Shortcut::supports_description` says this one can't
+    /// have one — see there for why.
+    pub fn start_edit_description(&mut self) {
+        let Some(idx) = self.table_state.selected() else {
+            return;
+        };
+        let Some(shortcut) = self.visible().get(idx).map(|s| (*s).clone()) else {
+            return;
+        };
+        if !shortcut.supports_description() {
+            self.set_status(format!("Can't add a description to a `{}` bind.", shortcut.bind_type));
+            return;
+        }
+
+        self.clear_status();
+        let buffer = shortcut.description_edit_buffer();
+        self.edit_cursor = buffer.chars().count();
+        self.edit_buffer = buffer;
+        self.editing_line = Some(shortcut.line);
+        self.resume_line = Some(shortcut.line);
+        self.mode = Mode::EditDescription;
+    }
+
     fn start_edit(&mut self, mode: Mode, buffer_for: impl FnOnce(&Shortcut) -> String) {
         let Some(idx) = self.table_state.selected() else {
             return;
@@ -559,6 +585,17 @@ impl App {
                 };
                 shortcut.with_target(dispatcher_raw, args_raw)
             }),
+            Mode::EditDescription => {
+                let description = self.edit_buffer.trim();
+                if description.is_empty() {
+                    self.set_status("Description can't be empty.".to_string());
+                    return;
+                }
+                self.shortcuts
+                    .iter()
+                    .find(|s| s.line == line_no)
+                    .and_then(|shortcut| shortcut.with_description(description))
+            }
             Mode::EditMainMod => self.variables.iter().find(|v| v.line == line_no).map(|variable| {
                 let value = self.edit_buffer.trim();
                 let mut line = match variable.format {
@@ -1884,6 +1921,122 @@ mod tests {
         assert!(
             contents.contains("hl.bind(mainMod .. \" + SHIFT + E\", hl.dsp.exec_cmd(\"kill.sh\"), { description = \"Kill\" })"),
             "unexpected contents: {contents}"
+        );
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn start_edit_description_prefills_an_empty_buffer_for_a_bind_with_none_yet() {
+        let mut app = edit_app();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.table_state.select(Some(0));
+
+        app.start_edit_description();
+
+        assert_eq!(app.mode, Mode::EditDescription);
+        assert_eq!(app.edit_buffer, "");
+    }
+
+    #[test]
+    fn start_edit_description_prefills_the_existing_description() {
+        let mut app = edit_app();
+        let mut s = sample_shortcut(1, "Q");
+        s.bind_type = "bindd".to_string();
+        s.description_raw = Some("Kill active window".to_string());
+        app.shortcuts = vec![s];
+        app.table_state.select(Some(0));
+
+        app.start_edit_description();
+
+        assert_eq!(app.mode, Mode::EditDescription);
+        assert_eq!(app.edit_buffer, "Kill active window");
+    }
+
+    #[test]
+    fn start_edit_description_refuses_for_an_unsupported_conf_bind_type() {
+        let mut app = edit_app();
+        app.mode = Mode::Normal;
+        let mut s = sample_shortcut(1, "Q");
+        s.bind_type = "binde".to_string();
+        app.shortcuts = vec![s];
+        app.table_state.select(Some(0));
+
+        app.start_edit_description();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("binde")));
+    }
+
+    #[test]
+    fn save_edit_editdescription_upgrades_a_plain_bind_to_bindd_on_disk() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-editdescription-upgrade-{}.conf", std::process::id()));
+        fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::EditDescription;
+        app.editing_line = Some(1);
+        app.edit_buffer = "Kill active window".to_string();
+
+        app.save_edit();
+
+        assert_eq!(app.status.as_deref(), Some("Saved."));
+        let contents = fs::read_to_string(&source).unwrap();
+        assert_eq!(contents, "bindd = $mainMod, Q, Kill active window, exec, foo\n");
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_editdescription_rejects_empty_input_and_leaves_the_file_untouched() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-editdescription-empty-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::EditDescription;
+        app.editing_line = Some(1);
+        app.edit_buffer = "   ".to_string();
+
+        app.save_edit();
+
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("can't be empty")));
+        assert_eq!(fs::read_to_string(&source).unwrap(), "bind = SUPER, Q, exec, foo\n");
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_editdescription_on_a_lua_source_updates_only_the_options_table() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-editdescription-lua-{}.lua", std::process::id()));
+        fs::write(
+            &source,
+            "hl.bind(\"CTRL + ALT + T\", hl.dsp.exec_cmd(\"themes.sh\"), { description = \"Old\" })\n",
+        )
+        .unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.load();
+        assert_eq!(app.shortcuts.len(), 1);
+        app.table_state.select_first();
+
+        app.start_edit_description();
+        app.edit_buffer = "Open theme picker".to_string();
+        app.edit_cursor = app.edit_buffer.chars().count();
+        app.save_edit();
+
+        assert_eq!(app.status.as_deref(), Some("Saved."));
+        let contents = fs::read_to_string(&source).unwrap();
+        assert_eq!(
+            contents,
+            "hl.bind(\"CTRL + ALT + T\", hl.dsp.exec_cmd(\"themes.sh\"), { description = \"Open theme picker\" })\n"
         );
 
         fs::remove_file(&source).unwrap();

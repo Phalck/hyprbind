@@ -11,6 +11,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let footer_height = match app.mode {
         Mode::EditKey
         | Mode::EditTarget
+        | Mode::EditDescription
         | Mode::EditMainMod
         | Mode::SourcePath
         | Mode::TemplateFolder
@@ -91,7 +92,7 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
     match mode {
         Mode::Normal => (
             "Browse",
-            "select a shortcut, then e/a/E to edit, o to open its script's folder, or t/l for templates",
+            "select a shortcut, then e/a/d/E to edit, o to open its script's folder, or t/l for templates",
         ),
         Mode::Search => (
             "Search",
@@ -104,6 +105,10 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
         Mode::EditTarget => (
             "Edit target",
             "change the dispatcher and arguments of the selected shortcut",
+        ),
+        Mode::EditDescription => (
+            "Edit description",
+            "change the description of the selected shortcut",
         ),
         Mode::EditMainMod => (
             "Edit $mainMod",
@@ -385,6 +390,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = match app.mode {
         Mode::EditKey => edit_footer_lines("key", app),
         Mode::EditTarget => edit_footer_lines("target", app),
+        Mode::EditDescription => edit_footer_lines("description", app),
         Mode::EditMainMod => edit_footer_lines("$mainMod", app),
         Mode::SourcePath => edit_footer_lines("keybindings file", app),
         Mode::TemplateFolder => edit_footer_lines("template folder", app),
@@ -416,11 +422,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 Line::from(status.as_str()).style(Style::default().fg(Color::Green))
             } else if app.query.is_empty() {
                 Line::from(
-                    "/ search   e edit key   a edit target   E edit $mainMod   o open terminal   t save template   l load template   T template folder   S keybindings file   b backup   r restore   B backup folder   O terminal command   ↑/k ↓/j move   q quit",
+                    "/ search   e edit key   a edit target   d edit description   E edit $mainMod   o open terminal   t save template   l load template   T template folder   S keybindings file   b backup   r restore   B backup folder   O terminal command   ↑/k ↓/j move   q quit",
                 )
             } else {
                 Line::from(format!(
-                    "filter: \"{}\"   / change filter   e/a edit   E $mainMod   o terminal   t/l templates   S file   b/r/B backup   O term. cmd.   ↑/k ↓/j move   q quit",
+                    "filter: \"{}\"   / change filter   e/a/d edit   E $mainMod   o terminal   t/l templates   S file   b/r/B backup   O term. cmd.   ↑/k ↓/j move   q quit",
                     app.query
                 ))
             };

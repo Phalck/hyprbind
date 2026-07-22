@@ -138,6 +138,61 @@ impl Shortcut {
         self.build_line(&self.mods_raw, &self.key_raw, dispatcher_raw, args_raw)
     }
 
+    /// Starting text for the "edit description" text box: the description exactly as written, or
+    /// empty if this shortcut doesn't have one yet.
+    pub fn description_edit_buffer(&self) -> String {
+        self.description_raw.clone().unwrap_or_default()
+    }
+
+    /// Whether this shortcut can carry a description at all. Always true for Lua (its options
+    /// table can always gain a `description = "..."` entry); for `.conf`, only a plain `bind` or
+    /// an existing `bindd` — adding one to e.g. `binde`/`bindm` would mean guessing the right
+    /// combined-flag directive name (`bindmd`? `binded`?), which hyprbind won't do.
+    pub fn supports_description(&self) -> bool {
+        match self.format {
+            SourceFormat::Conf => self.bind_type == "bind" || self.bind_type == "bindd",
+            SourceFormat::Lua => true,
+        }
+    }
+
+    /// Rebuild the source line with the description changed to `description`, everything else
+    /// (mods, key, dispatcher, args/other options, comment) kept exactly as originally written.
+    /// `None` if `supports_description` is false for this shortcut.
+    ///
+    /// For `.conf`, a plain `bind` gains a description by becoming `bindd` (the field is inserted
+    /// in its usual position); an existing `bindd` just has its description field replaced. For
+    /// Lua, an existing `description = "..."` entry in the options table has just its value
+    /// replaced; a table with other options but no description gets one appended; a shortcut with
+    /// no options table at all gets a fresh one.
+    pub fn with_description(&self, description: &str) -> Option<String> {
+        if !self.supports_description() {
+            return None;
+        }
+
+        match self.format {
+            SourceFormat::Conf => {
+                let mut updated = self.clone();
+                updated.bind_type = "bindd".to_string();
+                updated.description_raw = Some(description.to_string());
+                Some(updated.build_conf_line(&self.mods_raw, &self.key_raw, &self.dispatcher_raw, &self.args_raw))
+            }
+            SourceFormat::Lua => {
+                let escaped = description.replace('"', "\\\"");
+                let new_options = match (&self.options_raw, &self.description_raw) {
+                    (Some(options), Some(old)) => {
+                        options.replacen(&format!("\"{old}\""), &format!("\"{escaped}\""), 1)
+                    }
+                    (Some(options), None) => insert_lua_description(options, &escaped),
+                    (None, _) => format!("{{ description = \"{escaped}\" }}"),
+                };
+                let mut updated = self.clone();
+                updated.options_raw = Some(new_options);
+                updated.description_raw = Some(description.to_string());
+                Some(updated.build_lua_line(&self.mods_raw, &self.key_raw, &self.dispatcher_raw))
+            }
+        }
+    }
+
     /// Rebuild the full source line from its fields. Dispatches on `format`, since `.conf` and
     /// Lua need entirely different syntax to say the same thing.
     fn build_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str, args_raw: &str) -> String {
@@ -268,6 +323,22 @@ fn lua_key_expr(mods_raw: &str, key_raw: &str) -> String {
         .chain(std::iter::once(key_raw.trim_start_matches('$').to_string()))
         .collect();
     format!("\"{}\"", all.join(" + "))
+}
+
+/// Add a `description = "..."` entry to an `hl.bind` options table (`options`, verbatim including
+/// its braces) that doesn't already have one, preserving every other entry exactly. `escaped` is
+/// the description text, already `"`-escaped for embedding in a Lua string.
+fn insert_lua_description(options: &str, escaped: &str) -> String {
+    let trimmed = options.trim_end();
+    let Some(before_close) = trimmed.strip_suffix('}') else {
+        // Not a well-formed `{ ... }` table (shouldn't happen for anything hyprbind parsed);
+        // fall back to a fresh table rather than producing something worse.
+        return format!("{{ description = \"{escaped}\" }}");
+    };
+    let before_close = before_close.trim_end();
+    let inner_is_empty = before_close.trim_start_matches('{').trim().is_empty();
+    let separator = if inner_is_empty { " " } else { ", " };
+    format!("{before_close}{separator}description = \"{escaped}\" }}")
 }
 
 #[cfg(test)]
@@ -513,5 +584,98 @@ mod tests {
         let mut s = lua_shortcut();
         s.dispatcher = "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"toggle\" })".to_string();
         assert_eq!(s.exec_command(), None);
+    }
+
+    #[test]
+    fn description_edit_buffer_is_empty_when_there_is_no_description() {
+        assert_eq!(shortcut().description_edit_buffer(), "");
+    }
+
+    #[test]
+    fn description_edit_buffer_uses_the_existing_description() {
+        assert_eq!(lua_shortcut().description_edit_buffer(), "Open the terminal");
+    }
+
+    #[test]
+    fn supports_description_is_true_for_plain_bind_and_bindd() {
+        assert!(shortcut().supports_description());
+        let mut bindd = shortcut();
+        bindd.bind_type = "bindd".to_string();
+        assert!(bindd.supports_description());
+    }
+
+    #[test]
+    fn supports_description_is_false_for_other_conf_bind_types() {
+        let mut binde = shortcut();
+        binde.bind_type = "binde".to_string();
+        assert!(!binde.supports_description());
+        assert_eq!(binde.with_description("New description"), None);
+    }
+
+    #[test]
+    fn supports_description_is_always_true_for_lua() {
+        assert!(lua_shortcut().supports_description());
+    }
+
+    #[test]
+    fn with_description_upgrades_a_plain_conf_bind_to_bindd() {
+        let updated = shortcut().with_description("Toggle animations").unwrap();
+        assert_eq!(
+            updated,
+            "bindd = $mainMod SHIFT, A, Toggle animations, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations"
+        );
+    }
+
+    #[test]
+    fn with_description_replaces_an_existing_conf_bindd_description() {
+        let mut s = shortcut();
+        s.bind_type = "bindd".to_string();
+        s.description_raw = Some("Old description".to_string());
+        let updated = s.with_description("New description").unwrap();
+        assert_eq!(
+            updated,
+            "bindd = $mainMod SHIFT, A, New description, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations"
+        );
+    }
+
+    #[test]
+    fn with_description_replaces_only_the_quoted_value_in_a_lua_options_table() {
+        let mut s = lua_shortcut();
+        s.options_raw = Some("{ mouse = true, description = \"Open the terminal\" }".to_string());
+        let updated = s.with_description("Launch a terminal").unwrap();
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + RETURN\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { mouse = true, description = \"Launch a terminal\" })"
+        );
+    }
+
+    #[test]
+    fn with_description_appends_to_a_lua_options_table_with_no_description_yet() {
+        let mut s = lua_shortcut();
+        s.options_raw = Some("{ mouse = true }".to_string());
+        s.description_raw = None;
+        let updated = s.with_description("Move window with the mouse").unwrap();
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + RETURN\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { mouse = true, description = \"Move window with the mouse\" })"
+        );
+    }
+
+    #[test]
+    fn with_description_creates_an_options_table_when_lua_bind_had_none() {
+        let mut s = lua_shortcut();
+        s.options_raw = None;
+        s.description_raw = None;
+        let updated = s.with_description("Open the terminal").unwrap();
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + RETURN\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"
+        );
+    }
+
+    #[test]
+    fn with_description_escapes_embedded_quotes_for_lua() {
+        let updated = lua_shortcut().with_description("Say \"hi\"").unwrap();
+        assert!(updated.contains("description = \"Say \\\"hi\\\"\""));
     }
 }

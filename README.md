@@ -73,6 +73,7 @@ cargo run
 | `/` | Start or edit a search |
 | `e` | Edit the selected shortcut's key |
 | `a` | Edit the selected shortcut's target (dispatcher and arguments) |
+| `d` | Edit the selected shortcut's description |
 | `E` | Edit the `$mainMod` variable's value |
 | `o` | Open a terminal in the directory of the script the selected shortcut runs |
 | `t` | Save shortcuts to a new template |
@@ -115,17 +116,19 @@ backspacing to an empty query and pressing Enter (or by pressing Esc).
 
 ### Editing
 
-Editing is split into two scoped commands rather than one free-form line
-editor:
+Editing is split into scoped commands rather than one free-form line editor:
 
 - `e` edits the **key**: the modifiers and key, e.g. `$mainMod SHIFT, Q`.
 - `a` edits the **target**: the dispatcher and its arguments, e.g.
   `exec, ~/.config/ml4w/settings/terminal.sh`.
+- `d` edits the **description** — see
+  [Editing the description](#editing-the-description) below, since it works a
+  little differently.
 
-Either opens a text field prefilled with that field exactly as written in the
-source, including any `$VAR` reference — editing the key never disturbs the
-target, and vice versa, so a variable like `$mainMod` in the half you're not
-touching survives untouched.
+Each opens a text field prefilled with that field exactly as written in the
+source, including any `$VAR` reference — editing one never disturbs the
+others, so a variable like `$mainMod` in a field you're not touching survives
+untouched.
 
 | Key | Action |
 | --- | --- |
@@ -141,6 +144,8 @@ For the key field, text before the first comma is the modifiers and text
 after is the key (no comma means no modifiers, just a key). For the target
 field, text before the first comma is the dispatcher and the rest is its
 arguments (no comma means a dispatcher with no arguments, e.g. `killactive`).
+The description field (`d`) isn't split at all — the whole field is the
+description text, comma and all.
 
 Saving rebuilds the whole source line from its fields (mods, key,
 description, dispatcher, arguments, comment) and replaces only that one line
@@ -167,6 +172,29 @@ that suggestion (nothing else changes); Esc cancels the whole edit, leaving
 the original key untouched. If no unused modifier resolves the conflict, only
 Esc is offered. This check only applies to `e` (the key); editing the target
 with `a` can't create a duplicate, since the key doesn't change.
+
+### Editing the description
+
+`d` opens the same text field as `e`/`a`, prefilled with the current
+description (empty if there isn't one yet). Empty input is rejected — an
+empty text box just means "no description set," not "clear it" — so save
+something or press Esc to cancel.
+
+Unlike the key and target, not every shortcut can take a description:
+
+- **Lua** (`hl.bind`) shortcuts always can. Saving replaces just the quoted
+  value of an existing `description = "..."` entry in the options table if
+  there is one, adds one to the table if there isn't (any other option, e.g.
+  `mouse = true`, is left alone), or creates a fresh options table if the
+  bind had none at all.
+- **`.conf`** shortcuts can if they're a plain `bind` or already a `bindd`.
+  A plain `bind` becomes a `bindd` on save, with the description inserted in
+  its usual field position; an existing `bindd`'s description is just
+  replaced. Any other directive (`binde`, `bindm`, `bindle`, ...) can't —
+  `d` reports this immediately rather than opening a text field that could
+  never be saved, since turning e.g. `binde` into a description-carrying
+  variant would mean guessing the right combined-flag directive name
+  (`bindde`? `binded`?), which hyprbind won't do.
 
 ### Editing `$mainMod`
 
@@ -340,11 +368,16 @@ round-tripping, and the app-level integration that writes it on a successful
 overwrite plus reload on restore, and failure handling for both),
 duplicate-key detection (no self-conflict on an unchanged combo, variable
 resolution when comparing, the fix search finding or failing to find an
-unused modifier, and both outcomes of the confirm screen), and `o`'s
+unused modifier, and both outcomes of the confirm screen), `o`'s
 script-detection logic (recognizing `exec`-style dispatchers in both
 formats, resolving a script run directly vs. through an interpreter,
 correctly finding nothing in a system-command pipeline, and the terminal
-actually getting spawned with the right working directory):
+actually getting spawned with the right working directory), and `d`'s
+description editing (upgrading a plain `bind` to `bindd` vs. replacing an
+existing `bindd`'s description, refusing an unsupported `.conf` directive,
+and the three Lua cases — replacing an existing `description` entry,
+appending one to a table that has other options but not that one, and
+creating a fresh options table from scratch):
 
 ```sh
 cargo test
