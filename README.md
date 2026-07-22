@@ -97,6 +97,13 @@ setting the template folder) show it in the footer in place of the key hints.
 That message clears itself after 5 seconds, even if you don't press anything,
 so the hints come back on their own.
 
+The key hints themselves are split into two groups: everyday commands, and a
+`Settings:`-labeled group for the file-path/folder/command commands (`E`,
+`T`, `S`, `B`, `O`) — kept visually separate so they don't crowd out the
+commands you use constantly. Each group word-wraps independently to fit the
+terminal's actual width, so every command stays visible (on more lines, if
+the terminal is narrow) rather than being cut off.
+
 ### Search and filtering
 
 Press `/` to open the search box. The table filters live as you type, matching
@@ -384,7 +391,10 @@ directive; replacing an existing `bindd` description without touching its
 comment; and the Lua cases — replacing an existing `description` entry,
 appending one to a table that has other options but not that one, creating a
 fresh options table from scratch, and preferring an existing trailing
-comment over creating one):
+comment over creating one), and the footer's word-wrapping (items packed
+onto as few lines as fit a given width, none exceeding it, an
+oversized single item still getting its own line rather than being dropped,
+and a label's width counting toward the first line):
 
 ```sh
 cargo test

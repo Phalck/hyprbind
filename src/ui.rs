@@ -8,25 +8,8 @@ use crate::app::{App, Mode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    let footer_height = match app.mode {
-        Mode::EditKey
-        | Mode::EditTarget
-        | Mode::EditDescription
-        | Mode::EditMainMod
-        | Mode::SourcePath
-        | Mode::TemplateFolder
-        | Mode::TemplateSaveName
-        | Mode::BackupFolder
-        | Mode::TerminalCommand => 2,
-        Mode::Normal
-        | Mode::Search
-        | Mode::TemplateSaveSelect
-        | Mode::TemplateList
-        | Mode::TemplatePreview
-        | Mode::BackupList
-        | Mode::BackupConfirm
-        | Mode::DuplicateKeyConfirm => 1,
-    };
+    let footer_lines = footer_lines(app, area.width);
+    let footer_height = footer_lines.len() as u16;
     let chunks = Layout::vertical([
         Constraint::Length(4),
         Constraint::Min(0),
@@ -58,7 +41,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
 
-    draw_footer(frame, app, chunks[2]);
+    frame.render_widget(Paragraph::new(footer_lines), chunks[2]);
 }
 
 fn draw_title(frame: &mut Frame, app: &App, area: Rect) {
@@ -386,8 +369,11 @@ fn draw_duplicate_confirm(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(body, area);
 }
 
-fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let lines: Vec<Line> = match app.mode {
+/// Build the footer's lines for the current mode. Takes the live terminal width because
+/// `Mode::Normal`'s hint list is long enough to need wrapping (see `normal_mode_footer_lines`);
+/// every other mode's footer is short and fixed regardless of width.
+fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
+    match app.mode {
         Mode::EditKey => edit_footer_lines("key", app),
         Mode::EditTarget => edit_footer_lines("target", app),
         Mode::EditDescription => edit_footer_lines("description", app),
@@ -416,24 +402,101 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
             app.query
         ))],
         Mode::Normal => {
-            let line = if let Some(error) = &app.error {
-                Line::from(error.as_str()).style(Style::default().fg(Color::Red))
+            if let Some(error) = &app.error {
+                vec![Line::from(error.clone()).style(Style::default().fg(Color::Red))]
             } else if let Some(status) = &app.status {
-                Line::from(status.as_str()).style(Style::default().fg(Color::Green))
-            } else if app.query.is_empty() {
-                Line::from(
-                    "/ search   e edit key   a edit target   d edit description   E edit $mainMod   o open terminal   t save template   l load template   T template folder   S keybindings file   b backup   r restore   B backup folder   O terminal command   ↑/k ↓/j move   q quit",
-                )
+                vec![Line::from(status.clone()).style(Style::default().fg(Color::Green))]
             } else {
-                Line::from(format!(
-                    "filter: \"{}\"   / change filter   e/a/d edit   E $mainMod   o terminal   t/l templates   S file   b/r/B backup   O term. cmd.   ↑/k ↓/j move   q quit",
-                    app.query
-                ))
-            };
-            vec![line]
+                normal_mode_footer_lines(app, width)
+            }
         }
-    };
-    frame.render_widget(Paragraph::new(lines), area);
+    }
+}
+
+/// Commands shown in the main (non-Settings) group of the Normal-mode footer, in display order.
+/// The very first item changes depending on whether a search filter is active; see
+/// `normal_mode_footer_lines`.
+const NORMAL_MODE_COMMAND_ITEMS: [&str; 10] = [
+    "e edit key",
+    "a edit target",
+    "d edit description",
+    "o open terminal",
+    "t save template",
+    "l load template",
+    "b backup",
+    "r restore",
+    "↑/k ↓/j move",
+    "q quit",
+];
+
+/// Commands shown in the `Settings:` group of the Normal-mode footer: the file-path/folder/command
+/// configuration commands, kept visually separate from the everyday browse/edit/backup actions
+/// above so the latter don't get lost among them.
+const SETTINGS_ITEMS: [&str; 5] = [
+    "E edit $mainMod",
+    "T template folder",
+    "S keybindings file",
+    "B backup folder",
+    "O terminal command",
+];
+
+/// Build the Normal-mode footer's hint lines: a word-wrapped group of everyday commands, followed
+/// by a word-wrapped, `Settings:`-labeled group of the configuration commands — both wrapped
+/// independently to fit `width` so nothing is ever silently clipped, at any terminal width.
+fn normal_mode_footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
+    let width = width as usize;
+
+    let mut commands: Vec<&str> = Vec::with_capacity(NORMAL_MODE_COMMAND_ITEMS.len() + 2);
+    let filter_item;
+    if app.query.is_empty() {
+        commands.push("/ search");
+    } else {
+        filter_item = format!("filter: \"{}\"", app.query);
+        commands.push(&filter_item);
+        commands.push("/ change filter");
+    }
+    commands.extend(NORMAL_MODE_COMMAND_ITEMS);
+
+    wrap_hints("", &commands, width)
+        .into_iter()
+        .chain(wrap_hints("Settings: ", &SETTINGS_ITEMS, width))
+        .map(Line::from)
+        .collect()
+}
+
+/// Greedily pack `items` (joined with three spaces, matching the footer's existing visual style)
+/// onto as few lines as fit `max_width` columns each. `prefix` is prepended to the first line only
+/// and counts toward its width; continuation lines start directly with the next item. An item
+/// wider than `max_width` on its own still gets forced onto its own line rather than being split
+/// or dropped, so nothing ever silently disappears. Width is measured in `char`s, matching how the
+/// rest of the app measures text (e.g. `App::edit_cursor_byte_offset`), not display width.
+fn wrap_hints(prefix: &str, items: &[&str], max_width: usize) -> Vec<String> {
+    const SEP: &str = "   ";
+    let sep_width = SEP.chars().count();
+
+    let mut lines = Vec::new();
+    let mut current = prefix.to_string();
+    let mut current_width = prefix.chars().count();
+    let mut current_has_items = false;
+
+    for item in items {
+        let item_width = item.chars().count();
+        let needed = if current_has_items { sep_width + item_width } else { item_width };
+        if current_has_items && current_width + needed > max_width {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+            current_has_items = false;
+        }
+        if current_has_items {
+            current.push_str(SEP);
+            current_width += sep_width;
+        }
+        current.push_str(item);
+        current_width += item_width;
+        current_has_items = true;
+    }
+    lines.push(current);
+    lines
 }
 
 fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
@@ -452,4 +515,59 @@ fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
     ]);
 
     vec![prompt, Line::from("Enter save   Esc cancel   ←/→ move   Home/End jump")]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+    #[test]
+    fn wrap_hints_fits_everything_on_one_line_when_there_is_room() {
+        let lines = wrap_hints("", &["a", "b", "c"], 80);
+        assert_eq!(lines, vec!["a   b   c".to_string()]);
+    }
+
+    #[test]
+    fn wrap_hints_wraps_onto_multiple_lines_and_none_exceed_max_width() {
+        let items = ["e edit key", "a edit target", "d edit description", "q quit"];
+        let lines = wrap_hints("", &items, 20);
+        assert!(lines.len() > 1, "expected wrapping onto multiple lines, got {lines:?}");
+        for line in &lines {
+            assert!(line.chars().count() <= 20, "line exceeds max_width: {line:?}");
+        }
+        // Every item must still appear somewhere; wrapping must never drop content.
+        for item in items {
+            assert!(lines.iter().any(|line| line.contains(item)), "missing item: {item}");
+        }
+    }
+
+    #[test]
+    fn wrap_hints_forces_an_oversized_item_onto_its_own_line_rather_than_dropping_it() {
+        let lines = wrap_hints("", &["short", "a very long item that alone exceeds the width"], 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "short");
+        assert_eq!(lines[1], "a very long item that alone exceeds the width");
+    }
+
+    #[test]
+    fn wrap_hints_counts_the_prefix_toward_the_first_lines_width() {
+        // "Settings: " (10 chars) plus "one" (3) is 13, over a width of 12, so "one" should be
+        // forced onto the first line anyway (prefix + one item always fits on the first line)
+        // but a second item should overflow onto a new line.
+        let lines = wrap_hints("Settings: ", &["one", "two"], 12);
+        assert_eq!(lines, vec!["Settings: one".to_string(), "two".to_string()]);
+    }
+
+    #[test]
+    fn wrap_hints_with_no_items_returns_just_the_prefix() {
+        let lines = wrap_hints("Settings: ", &[], 80);
+        assert_eq!(lines, vec!["Settings: ".to_string()]);
+    }
+
+    #[test]
+    fn wrap_hints_with_no_items_and_no_prefix_returns_a_single_empty_line() {
+        let lines: Vec<String> = wrap_hints("", &[], 80);
+        assert_eq!(lines, vec![String::new()]);
+    }
 }
