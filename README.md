@@ -57,6 +57,31 @@ refuses rather than risk writing something broken.
 
 ## Install and run
 
+The install script builds hyprbind from source and puts the `hyprbind` binary
+on your `PATH` (`~/.local/bin` by default):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Phalck/hyprbind/master/install.sh | sh
+```
+
+Or, from a clone of this repo:
+
+```sh
+./install.sh
+```
+
+Set `HYPRBIND_INSTALL_DIR` to install somewhere else. Either way you still
+need Rust to build it — see [Requirements](#requirements) above.
+
+Once installed, just run:
+
+```sh
+hyprbind
+```
+
+To hack on hyprbind itself instead of installing it, build and run it
+in place:
+
 ```sh
 cargo build
 cargo run
