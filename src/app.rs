@@ -19,6 +19,12 @@ const STANDARD_MODIFIERS: [&str; 4] = ["SUPER", "SHIFT", "CTRL", "ALT"];
 /// How long a status message stays in the footer before it's cleared automatically, so the
 /// normal key-hint menu comes back without the user having to do anything.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
+/// Placeholder key a freshly-added shortcut (see `App::save_new_shortcut`) is bound to until `e`
+/// replaces it: not a real Hyprland keysym, so Hyprland's own reload never actually binds
+/// anything to it in the meantime.
+const NEW_SHORTCUT_KEY: &str = "CHANGEME";
+/// Placeholder dispatcher a freshly-added shortcut is bound to until `a` replaces it.
+const NEW_SHORTCUT_DISPATCHER: &str = "exec";
 
 fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
@@ -127,6 +133,8 @@ pub enum Mode {
     EditDescription,
     /// Editing the value of the `$mainMod` variable.
     EditMainMod,
+    /// Entering the description for a new shortcut being created; see `App::start_add_shortcut`.
+    AddShortcut,
     /// Editing the keybindings file path.
     SourcePath,
     /// Editing the template save/load folder.
@@ -724,6 +732,61 @@ impl App {
         self.duplicate_key_raw.clear();
     }
 
+    // ---- Add shortcut ----------------------------------------------------------------------
+
+    /// Start adding a new shortcut: prompts for its description first (`Mode::AddShortcut`);
+    /// `save_new_shortcut` appends it once that's entered, with placeholder key/target fields
+    /// left for `e`/`a` to fill in afterward. Conf-only, like `apply_template_selection`: there's
+    /// no reliable way to guess a valid Lua `hl.bind` dispatcher call to seed a brand new binding
+    /// with.
+    pub fn start_add_shortcut(&mut self) {
+        if self.source_format() == SourceFormat::Lua {
+            self.set_status(
+                "Adding shortcuts isn't supported yet for Lua-format keybinding files.".to_string(),
+            );
+            return;
+        }
+        self.clear_status();
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::AddShortcut;
+    }
+
+    /// Append a new shortcut, using the description just entered in `Mode::AddShortcut` and
+    /// placeholder key/dispatcher fields (`NEW_SHORTCUT_KEY`/`NEW_SHORTCUT_DISPATCHER`), then
+    /// select it so `e`/`a` are ready to replace those placeholders.
+    pub fn save_new_shortcut(&mut self) {
+        let description = self.edit_buffer.trim();
+        if description.is_empty() {
+            self.set_status("Description can't be empty.".to_string());
+            return;
+        }
+
+        let line = format!("bind = , {NEW_SHORTCUT_KEY}, {NEW_SHORTCUT_DISPATCHER} # {description}");
+        match append_lines(&self.source_path, "# Added via hyprbind", &[line]) {
+            Ok(()) => {
+                self.load();
+                match self.shortcuts.iter().map(|s| s.line).max() {
+                    Some(line_no) => {
+                        let pos = self.visible().iter().position(|s| s.line == line_no);
+                        self.table_state.select(pos);
+                        self.set_status(format!(
+                            "Added. Press e to set its key (currently {NEW_SHORTCUT_KEY}) and a to set its target."
+                        ));
+                    }
+                    None => {
+                        self.set_status("Added, but couldn't find it after reloading.".to_string());
+                    }
+                }
+            }
+            Err(err) => self.set_status(format!("Failed to add: {err}")),
+        }
+
+        self.edit_buffer.clear();
+        self.edit_cursor = 0;
+        self.mode = Mode::Normal;
+    }
+
     pub fn select_next(&mut self) {
         if !self.visible().is_empty() {
             self.table_state.select_next();
@@ -1023,7 +1086,11 @@ impl App {
             .selected()
             .and_then(|idx| self.visible().get(idx).map(|s| s.line));
 
-        match append_lines(&self.source_path, self.template_source_name.as_deref(), &lines) {
+        let marker = match self.template_source_name.as_deref() {
+            Some(label) => format!("# Applied from template: {label}"),
+            None => "# Applied from template".to_string(),
+        };
+        match append_lines(&self.source_path, &marker, &lines) {
             Ok(()) => {
                 self.set_status(if skipped > 0 {
                     format!("Applied {applied}, skipped {skipped} (already bound).")
@@ -1298,18 +1365,17 @@ fn write_line(path: &Path, line_no: usize, new_line: &str) -> io::Result<()> {
     write_atomic(path, &updated)
 }
 
-/// Append `new_lines` to the end of `path`, preceded by a blank line and a marker comment, and
-/// write the result back atomically. Every existing line is left untouched.
-fn append_lines(path: &Path, source_label: Option<&str>, new_lines: &[String]) -> io::Result<()> {
+/// Append `new_lines` to the end of `path`, preceded by a blank line and `marker` (a full `#
+/// ...` comment line), and write the result back atomically. Every existing line is left
+/// untouched.
+fn append_lines(path: &Path, marker: &str, new_lines: &[String]) -> io::Result<()> {
     let mut contents = fs::read_to_string(path)?;
     if !contents.is_empty() && !contents.ends_with('\n') {
         contents.push('\n');
     }
     contents.push('\n');
-    match source_label {
-        Some(label) => contents.push_str(&format!("# Applied from template: {label}\n")),
-        None => contents.push_str("# Applied from template\n"),
-    }
+    contents.push_str(marker);
+    contents.push('\n');
     for line in new_lines {
         contents.push_str(line);
         contents.push('\n');
@@ -2312,6 +2378,75 @@ mod tests {
     }
 
     #[test]
+    fn start_add_shortcut_is_blocked_for_a_lua_source() {
+        let mut app = edit_app();
+        app.mode = Mode::Normal;
+        app.source_path = PathBuf::from("/some/default.lua");
+        app.start_add_shortcut();
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
+    }
+
+    #[test]
+    fn start_add_shortcut_enters_add_mode_with_an_empty_buffer() {
+        let mut app = edit_app();
+        app.mode = Mode::Normal;
+        app.source_path = PathBuf::from("/some/default.conf");
+        app.edit_buffer = "leftover".to_string();
+        app.start_add_shortcut();
+        assert_eq!(app.mode, Mode::AddShortcut);
+        assert_eq!(app.edit_buffer, "");
+    }
+
+    #[test]
+    fn save_new_shortcut_rejects_empty_input_and_leaves_the_file_untouched() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-add-empty-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::AddShortcut;
+        app.edit_buffer = "   ".to_string();
+
+        app.save_new_shortcut();
+
+        assert_eq!(app.mode, Mode::AddShortcut);
+        assert_eq!(app.status.as_deref(), Some("Description can't be empty."));
+        let contents = fs::read_to_string(&source).unwrap();
+        assert_eq!(contents, "bind = SUPER, Q, exec, foo\n");
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_new_shortcut_appends_a_placeholder_bind_and_selects_it() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-add-new-{}.conf", std::process::id()));
+        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::AddShortcut;
+        app.edit_buffer = "Launch the launcher".to_string();
+
+        app.save_new_shortcut();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Added.")));
+
+        let contents = fs::read_to_string(&source).unwrap();
+        assert!(contents.contains("bind = , CHANGEME, exec # Launch the launcher"));
+
+        let selected = app.table_state.selected().and_then(|idx| app.visible().get(idx).copied());
+        assert!(selected.is_some_and(|s| s.comment.as_deref() == Some("Launch the launcher")));
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
     fn write_template_creates_folder_and_writes_resolved_lines() {
         let dir = std::env::temp_dir().join(format!("hyprbind-test-{}", std::process::id()));
         let folder = dir.join("templates");
@@ -2332,7 +2467,12 @@ mod tests {
         let path = std::env::temp_dir().join(format!("hyprbind-test-append-{}.conf", std::process::id()));
         fs::write(&path, "bind = $mainMod, Q, killactive\n").unwrap();
 
-        append_lines(&path, Some("gaming.hbt"), &["bind = SUPER, W, exec, foo".to_string()]).unwrap();
+        append_lines(
+            &path,
+            "# Applied from template: gaming.hbt",
+            &["bind = SUPER, W, exec, foo".to_string()],
+        )
+        .unwrap();
 
         let contents = fs::read_to_string(&path).unwrap();
         assert_eq!(

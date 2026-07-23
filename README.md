@@ -74,6 +74,7 @@ cargo run
 | `e` | Edit the selected shortcut's key |
 | `a` | Edit the selected shortcut's target (dispatcher and arguments) |
 | `d` | Edit the selected shortcut's description |
+| `A` | Add a new shortcut |
 | `E` | Edit the `$mainMod` variable's value |
 | `o` | Open a terminal in the directory of the script the selected shortcut runs |
 | `t` | Save shortcuts to a new template |
@@ -207,6 +208,26 @@ already has, in the same order the Description column itself prefers:
 
 Either way, everything else about the line — mods, key, dispatcher,
 arguments, any other option in a Lua table — is left exactly as it was.
+
+### Adding a shortcut
+
+`A` starts a new shortcut, `.conf`-syntax only (see the note on templates
+above — the same reasoning applies: there's no reliable way to guess a valid
+Lua `hl.bind` dispatcher call from nothing). It opens the same text field as
+`e`/`a`/`d`, but for the **description**, since that's the one field with no
+existing binding to prefill from. Empty input is rejected, same as `d`.
+
+Enter appends a new line —
+
+```
+bind = , CHANGEME, exec # <your description>
+```
+
+— to the end of the keybindings file, selects it, and shows a reminder in the
+footer. `CHANGEME` isn't a real Hyprland key, so nothing is actually bound
+yet; press `e` to give it a real key combo and `a` to set its dispatcher and
+arguments, the same way you would for any other shortcut. Until you do, the
+placeholder line just sits there ignored by Hyprland.
 
 ### Editing `$mainMod`
 

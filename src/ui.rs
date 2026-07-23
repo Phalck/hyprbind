@@ -75,7 +75,7 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
     match mode {
         Mode::Normal => (
             "Browse",
-            "select a shortcut, then e/a/d/E to edit, o to open its script's folder, or t/l for templates",
+            "select a shortcut, then e/a/d/E to edit, A to add one, o to open its script's folder, or t/l for templates",
         ),
         Mode::Search => (
             "Search",
@@ -96,6 +96,10 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
         Mode::EditMainMod => (
             "Edit $mainMod",
             "change the value every shortcut's $mainMod reference resolves to",
+        ),
+        Mode::AddShortcut => (
+            "Add shortcut",
+            "type a description; Enter creates the shortcut, then e/a set its key and target",
         ),
         Mode::SourcePath => (
             "Keybindings file",
@@ -378,6 +382,7 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
         Mode::EditTarget => edit_footer_lines("target", app),
         Mode::EditDescription => edit_footer_lines("description", app),
         Mode::EditMainMod => edit_footer_lines("$mainMod", app),
+        Mode::AddShortcut => edit_footer_lines("new shortcut's description", app),
         Mode::SourcePath => edit_footer_lines("keybindings file", app),
         Mode::TemplateFolder => edit_footer_lines("template folder", app),
         Mode::TemplateSaveName => edit_footer_lines("template name", app),
@@ -416,10 +421,11 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
 /// Commands shown in the main (non-Settings) group of the Normal-mode footer, in display order.
 /// The very first item changes depending on whether a search filter is active; see
 /// `normal_mode_footer_lines`.
-const NORMAL_MODE_COMMAND_ITEMS: [&str; 10] = [
+const NORMAL_MODE_COMMAND_ITEMS: [&str; 11] = [
     "e edit key",
     "a edit target",
     "d edit description",
+    "A add shortcut",
     "o open terminal",
     "t save template",
     "l load template",

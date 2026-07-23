@@ -46,6 +46,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('e') => app.start_edit_key(),
                     KeyCode::Char('a') => app.start_edit_target(),
                     KeyCode::Char('d') => app.start_edit_description(),
+                    KeyCode::Char('A') => app.start_add_shortcut(),
                     KeyCode::Char('E') => app.start_edit_main_mod(),
                     KeyCode::Char('t') => app.start_template_save_select(),
                     KeyCode::Char('l') => app.start_template_list(),
@@ -73,6 +74,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 },
                 Mode::EditKey | Mode::EditTarget | Mode::EditDescription | Mode::EditMainMod => match key.code {
                     KeyCode::Enter => app.save_edit(),
+                    KeyCode::Esc => app.cancel_edit(),
+                    KeyCode::Backspace => app.pop_edit_char(),
+                    KeyCode::Delete => app.delete_edit_char(),
+                    KeyCode::Left => app.move_edit_cursor_left(),
+                    KeyCode::Right => app.move_edit_cursor_right(),
+                    KeyCode::Home => app.move_edit_cursor_home(),
+                    KeyCode::End => app.move_edit_cursor_end(),
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        app.push_edit_char(c);
+                    }
+                    _ => {}
+                },
+                Mode::AddShortcut => match key.code {
+                    KeyCode::Enter => app.save_new_shortcut(),
                     KeyCode::Esc => app.cancel_edit(),
                     KeyCode::Backspace => app.pop_edit_char(),
                     KeyCode::Delete => app.delete_edit_char(),
