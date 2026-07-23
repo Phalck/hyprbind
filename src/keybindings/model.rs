@@ -181,7 +181,7 @@ impl Shortcut {
                     // description gets one added, and — since a real Lua bind's description
                     // almost always lives in its options table, not a trailing comment — nothing
                     // at all gets a fresh table.
-                    let escaped = text.replace('"', "\\\"");
+                    let escaped = escape_lua_string(text);
                     let new_options = match (&self.options_raw, &self.description_raw) {
                         (Some(options), Some(old)) => {
                             options.replacen(&format!("\"{old}\""), &format!("\"{escaped}\""), 1)
@@ -318,7 +318,7 @@ fn lua_key_expr(mods_raw: &str, key_raw: &str) -> String {
             .map(|t| t.trim_start_matches('$').to_string())
             .chain(std::iter::once(key_raw.trim_start_matches('$').to_string()))
             .collect();
-        return format!("{var_name} .. \" + {}\"", rest.join(" + "));
+        return format!("{var_name} .. \"{}\"", escape_lua_string(&format!(" + {}", rest.join(" + "))));
     }
 
     let all: Vec<String> = mods_raw
@@ -326,7 +326,16 @@ fn lua_key_expr(mods_raw: &str, key_raw: &str) -> String {
         .map(|t| t.trim_start_matches('$').to_string())
         .chain(std::iter::once(key_raw.trim_start_matches('$').to_string()))
         .collect();
-    format!("\"{}\"", all.join(" + "))
+    format!("\"{}\"", escape_lua_string(&all.join(" + ")))
+}
+
+/// Escape `\` and `"` for embedding `s` in a double-quoted Lua string literal. Backslash must be
+/// escaped first — escaping `"` first would double-escape the backslash that step just inserted.
+/// Used everywhere hyprbind writes user-typed text (a shortcut's key/mods, or its description)
+/// into Lua source, so a stray `"` in that text can't break out of the string literal and get
+/// interpreted as real Lua the next time the keybindings file is loaded.
+fn escape_lua_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Add a `description = "..."` entry to an `hl.bind` options table (`options`, verbatim including
@@ -692,5 +701,40 @@ mod tests {
     fn with_description_escapes_embedded_quotes_for_lua() {
         let updated = lua_shortcut().with_description("Say \"hi\"");
         assert!(updated.contains("description = \"Say \\\"hi\\\"\""));
+    }
+
+    #[test]
+    fn with_description_escapes_backslashes_for_lua() {
+        let updated = lua_shortcut().with_description("C:\\path");
+        assert!(updated.contains("description = \"C:\\\\path\""));
+    }
+
+    #[test]
+    fn lua_with_key_escapes_embedded_quotes_in_the_key_field() {
+        // A `"` typed into the key field must not be able to break out of the Lua string literal
+        // and get interpreted as real Lua the next time the keybindings file loads.
+        let updated = lua_shortcut()
+            .with_key("$mainMod", "Q\" }); hl.dsp.exec_cmd(\"touch /tmp/pwned\")--");
+        assert_eq!(
+            updated,
+            "hl.bind(mainMod .. \" + Q\\\" }); hl.dsp.exec_cmd(\\\"touch /tmp/pwned\\\")--\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"
+        );
+    }
+
+    #[test]
+    fn lua_with_key_escapes_embedded_quotes_in_a_literal_key_expression() {
+        let mut s = lua_shortcut();
+        s.mods_raw = "SUPER".to_string();
+        let updated = s.with_key("SUPER", "Q\"");
+        assert_eq!(
+            updated,
+            "hl.bind(\"SUPER + Q\\\"\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"
+        );
+    }
+
+    #[test]
+    fn lua_with_key_escapes_backslashes_in_the_key_field() {
+        let updated = lua_shortcut().with_key("$mainMod", "Q\\");
+        assert!(updated.contains("mainMod .. \" + Q\\\\\""));
     }
 }
