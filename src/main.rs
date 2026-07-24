@@ -63,6 +63,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                     KeyCode::Char('a') => app.start_edit_target(),
                     KeyCode::Char('d') => app.start_edit_description(),
                     KeyCode::Char('A') => app.start_add_shortcut(),
+                    KeyCode::Char('x') => app.start_delete_shortcut(),
                     KeyCode::Char('E') => app.start_edit_main_mod(),
                     KeyCode::Char('t') => app.start_template_save_select(),
                     KeyCode::Char('l') => app.start_template_list(),
@@ -256,6 +257,11 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
                 Mode::DuplicateKeyConfirm => match key.code {
                     KeyCode::Enter => app.accept_duplicate_fix(),
                     KeyCode::Esc => app.cancel_duplicate_confirm(),
+                    _ => {}
+                },
+                Mode::DeleteConfirm => match key.code {
+                    KeyCode::Enter => app.confirm_delete_shortcut(),
+                    KeyCode::Esc => app.cancel_delete_shortcut(),
                     _ => {}
                 },
             }

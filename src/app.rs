@@ -174,6 +174,8 @@ pub enum Mode {
     /// Confirming how to resolve a key combo colliding with another shortcut's, after editing
     /// a shortcut's key.
     DuplicateKeyConfirm,
+    /// Confirming deletion of the selected shortcut before its line is removed from the file.
+    DeleteConfirm,
 }
 
 /// The result of `App::check_key_conflict`: which other shortcut a candidate combo collides
@@ -652,6 +654,58 @@ impl App {
                     .find(|v| v.line == line_no)
                     .map(|v| v.raw.as_str())
             })
+    }
+
+    /// Ask for confirmation before deleting the selected shortcut; see `confirm_delete_shortcut`.
+    pub fn start_delete_shortcut(&mut self) {
+        let Some(idx) = self.table_state.selected() else {
+            return;
+        };
+        let Some(line) = self.visible().get(idx).map(|s| s.line) else {
+            return;
+        };
+        self.clear_status();
+        self.editing_line = Some(line);
+        self.mode = Mode::DeleteConfirm;
+    }
+
+    /// Abandon a pending delete without touching the file.
+    pub fn cancel_delete_shortcut(&mut self) {
+        self.editing_line = None;
+        self.mode = Mode::Normal;
+    }
+
+    /// Remove the shortcut pending confirmation (see `start_delete_shortcut`) from `source_path`,
+    /// report the result, and return to `Mode::Normal`. Keeps the selection at roughly the same
+    /// row it was on, rather than jumping back to the top of the list, so deleting several
+    /// shortcuts in a row doesn't mean re-scrolling each time.
+    pub fn confirm_delete_shortcut(&mut self) {
+        let Some(line_no) = self.editing_line else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        let selected_idx = self.table_state.selected().unwrap_or(0);
+        let expected_old_line = self.expected_line_at(line_no).map(str::to_string);
+
+        match delete_line(&self.source_path, line_no, expected_old_line.as_deref()) {
+            Ok(()) => {
+                self.set_status("Deleted.".to_string());
+                self.load();
+                let visible_len = self.visible().len();
+                if visible_len == 0 {
+                    self.table_state.select(None);
+                } else {
+                    self.table_state
+                        .select(Some(selected_idx.min(visible_len - 1)));
+                }
+            }
+            Err(err) => {
+                self.set_status(format!("Failed to delete: {err}"));
+            }
+        }
+
+        self.editing_line = None;
+        self.mode = Mode::Normal;
     }
 
     /// Write `new_line` to `source_path` at `editing_line` (if present), report the result, and
@@ -1472,6 +1526,42 @@ fn write_line(
     write_atomic(path, &updated)
 }
 
+/// Remove line `line_no` (1-based) from `contents` entirely, preserving every other line.
+/// Returns `None` if `line_no` is out of range, or if `expected_old_line` is given and doesn't
+/// match what's actually there (the file changed on disk since it was parsed).
+fn remove_line(contents: &str, line_no: usize, expected_old_line: Option<&str>) -> Option<String> {
+    let mut lines: Vec<&str> = contents.lines().collect();
+    let idx = line_no.checked_sub(1)?;
+    if idx >= lines.len() {
+        return None;
+    }
+    if let Some(expected) = expected_old_line
+        && lines[idx] != expected
+    {
+        return None;
+    }
+    lines.remove(idx);
+
+    let mut result = lines.join("\n");
+    if contents.ends_with('\n') && !lines.is_empty() {
+        result.push('\n');
+    }
+    Some(result)
+}
+
+/// Read `path`, remove line `line_no`, and write the result back atomically. `expected_old_line`
+/// is the same optimistic-concurrency guard as `write_line`'s.
+fn delete_line(path: &Path, line_no: usize, expected_old_line: Option<&str>) -> io::Result<()> {
+    let contents = fs::read_to_string(path)?;
+    let updated = remove_line(&contents, line_no, expected_old_line).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "source file changed on disk; reload and try again",
+        )
+    })?;
+    write_atomic(path, &updated)
+}
+
 /// Append `new_lines` to the end of `path`, preceded by a blank line and `marker` (a full `#
 /// ...` comment line), and write the result back atomically. Every existing line is left
 /// untouched.
@@ -1555,6 +1645,43 @@ mod tests {
         assert!(
             replace_line(contents, 2, Some("something else"), "TWO").is_none(),
             "the file changed since expected_old_line was captured, so the write must be refused"
+        );
+    }
+
+    #[test]
+    fn remove_line_drops_only_the_target_line() {
+        let contents = "one\ntwo\nthree\n";
+        let updated = remove_line(contents, 2, None).unwrap();
+        assert_eq!(updated, "one\nthree\n");
+    }
+
+    #[test]
+    fn remove_line_preserves_missing_trailing_newline() {
+        let contents = "one\ntwo\nthree";
+        let updated = remove_line(contents, 3, None).unwrap();
+        assert_eq!(updated, "one\ntwo");
+    }
+
+    #[test]
+    fn remove_line_of_the_only_line_leaves_an_empty_file() {
+        let contents = "only\n";
+        let updated = remove_line(contents, 1, None).unwrap();
+        assert_eq!(updated, "");
+    }
+
+    #[test]
+    fn remove_line_out_of_range_returns_none() {
+        let contents = "one\ntwo\n";
+        assert!(remove_line(contents, 5, None).is_none());
+        assert!(remove_line(contents, 0, None).is_none());
+    }
+
+    #[test]
+    fn remove_line_refuses_when_expected_old_line_does_not_match() {
+        let contents = "one\ntwo\nthree\n";
+        assert!(
+            remove_line(contents, 2, Some("something else")).is_none(),
+            "the file changed since expected_old_line was captured, so the delete must be refused"
         );
     }
 
@@ -2717,6 +2844,120 @@ mod tests {
         assert!(app.editing_line.is_none());
         assert!(app.duplicate_fix_mods_raw.is_none());
         assert!(app.duplicate_conflict_line.is_none());
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            original,
+            "cancel must never write anything"
+        );
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn start_delete_shortcut_enters_confirm_mode_for_the_selected_row() {
+        let mut app = edit_app();
+        app.mode = Mode::Normal;
+        app.shortcuts = vec![sample_shortcut(1, "Q"), sample_shortcut(2, "W")];
+        app.table_state.select(Some(1));
+
+        app.start_delete_shortcut();
+
+        assert_eq!(app.mode, Mode::DeleteConfirm);
+        assert_eq!(app.editing_line, Some(2));
+    }
+
+    #[test]
+    fn confirm_delete_shortcut_removes_the_line_and_keeps_a_nearby_row_selected() {
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-delete-confirm-{}.conf",
+            std::process::id()
+        ));
+        fs::write(
+            &source,
+            "bind = $mainMod, Q, exec, foo\nbind = $mainMod, W, exec, foo\nbind = $mainMod, E, exec, foo\n",
+        )
+        .unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![
+            sample_shortcut(1, "Q"),
+            sample_shortcut(2, "W"),
+            sample_shortcut(3, "E"),
+        ];
+        app.mode = Mode::DeleteConfirm;
+        app.editing_line = Some(2);
+        app.table_state.select(Some(1));
+
+        app.confirm_delete_shortcut();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.status.as_deref(), Some("Deleted."));
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            "bind = $mainMod, Q, exec, foo\nbind = $mainMod, E, exec, foo\n"
+        );
+        // Two shortcuts remain (indices 0 and 1); the deleted row was at index 1, so the
+        // selection should land on whatever is now at index 1 (the former third row) rather
+        // than jumping back to the top.
+        assert_eq!(app.table_state.selected(), Some(1));
+        assert!(app.editing_line.is_none());
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn confirm_delete_shortcut_refuses_when_the_line_changed_since_load() {
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-delete-concurrent-{}.conf",
+            std::process::id()
+        ));
+        fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::DeleteConfirm;
+        app.editing_line = Some(1);
+        app.table_state.select(Some(0));
+
+        // Something else changes the line before the delete is confirmed.
+        fs::write(&source, "bind = $mainMod, Q, exec, somethingelse\n").unwrap();
+
+        app.confirm_delete_shortcut();
+
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Failed to delete: source file changed on disk; reload and try again")
+        );
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            "bind = $mainMod, Q, exec, somethingelse\n",
+            "the concurrent change must survive untouched"
+        );
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn cancel_delete_shortcut_writes_nothing_and_resets_state() {
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-delete-cancel-{}.conf",
+            std::process::id()
+        ));
+        let original = "bind = $mainMod, Q, exec, foo\n";
+        fs::write(&source, original).unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::DeleteConfirm;
+        app.editing_line = Some(1);
+
+        app.cancel_delete_shortcut();
+
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.editing_line.is_none());
         assert_eq!(
             fs::read_to_string(&source).unwrap(),
             original,

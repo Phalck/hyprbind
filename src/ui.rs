@@ -27,6 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::BackupList => draw_backup_list(frame, app, chunks[1]),
         Mode::BackupConfirm => draw_backup_confirm(frame, app, chunks[1]),
         Mode::DuplicateKeyConfirm => draw_duplicate_confirm(frame, app, chunks[1]),
+        Mode::DeleteConfirm => draw_delete_confirm(frame, app, chunks[1]),
         _ => {
             let visible_len = app.visible().len();
             if app.shortcuts.is_empty() {
@@ -81,7 +82,7 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
     match mode {
         Mode::Normal => (
             "Browse",
-            "select a shortcut, then e/a/d/E to edit, A to add one, o to open its script's folder, or t/l for templates",
+            "select a shortcut, then e/a/d/E to edit, A to add one, x to delete it, o to open its script's folder, or t/l for templates",
         ),
         Mode::Search => (
             "Search",
@@ -147,6 +148,10 @@ fn mode_help(mode: Mode) -> (&'static str, &'static str) {
         Mode::DuplicateKeyConfirm => (
             "Key already used",
             "add the suggested modifier, or cancel to keep the original key",
+        ),
+        Mode::DeleteConfirm => (
+            "Confirm delete",
+            "Enter removes the shortcut's line from the file, Esc cancels",
         ),
     }
 }
@@ -390,6 +395,32 @@ fn draw_duplicate_confirm(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(body, area);
 }
 
+fn draw_delete_confirm(frame: &mut Frame, app: &App, area: Rect) {
+    let target = app
+        .shortcuts
+        .iter()
+        .find(|s| Some(s.line) == app.editing_line);
+    let desc = target
+        .map(|s| format!("{} ({})", s.key_combo(), s.action()))
+        .unwrap_or_else(|| "this shortcut".to_string());
+
+    let message = format!(
+        "Delete {desc}?\n\n\
+         This removes its line from {}.\n\
+         Enter to confirm, Esc to cancel.",
+        app.source_path.display()
+    );
+
+    let body = Paragraph::new(message)
+        .style(Style::default().fg(Color::Red))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Confirm delete"),
+        );
+    frame.render_widget(body, area);
+}
+
 /// Build the footer's lines for the current mode. Takes the live terminal width because
 /// `Mode::Normal`'s hint list is long enough to need wrapping (see `normal_mode_footer_lines`);
 /// every other mode's footer is short and fixed regardless of width.
@@ -419,6 +450,7 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
         } else {
             "Esc cancel"
         })],
+        Mode::DeleteConfirm => vec![Line::from("Enter delete   Esc cancel")],
         Mode::Search => vec![Line::from(format!(
             "/{}▏   Enter apply   Esc cancel",
             app.query
@@ -438,11 +470,12 @@ fn footer_lines(app: &App, width: u16) -> Vec<Line<'static>> {
 /// Commands shown in the main (non-Settings) group of the Normal-mode footer, in display order.
 /// The very first item changes depending on whether a search filter is active; see
 /// `normal_mode_footer_lines`.
-const NORMAL_MODE_COMMAND_ITEMS: [&str; 11] = [
+const NORMAL_MODE_COMMAND_ITEMS: [&str; 12] = [
     "e edit key",
     "a edit target",
     "d edit description",
     "A add shortcut",
+    "x delete shortcut",
     "o open terminal",
     "t save template",
     "l load template",

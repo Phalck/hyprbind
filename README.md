@@ -105,6 +105,7 @@ cargo run
 | `a` | Edit the selected shortcut's target (dispatcher and arguments) |
 | `d` | Edit the selected shortcut's description |
 | `A` | Add a new shortcut |
+| `x` | Delete the selected shortcut (asks for confirmation first) |
 | `E` | Edit the `$mainMod` variable's value |
 | `o` | Open a terminal in the directory of the script the selected shortcut runs |
 | `t` | Save shortcuts to a new template |
@@ -259,6 +260,15 @@ yet; press `e` to give it a real key combo and `a` to set its dispatcher and
 arguments, the same way you would for any other shortcut. Until you do, the
 placeholder line just sits there ignored by Hyprland.
 
+### Deleting a shortcut
+
+`x` deletes the selected shortcut. Since this removes a line from the
+keybindings file rather than just changing one, it asks for confirmation
+first: a screen naming the shortcut (key combo and action) and the file it
+would be removed from. Enter deletes the line and reloads the table, keeping
+the selection at roughly the same row rather than jumping back to the top;
+Esc cancels without touching the file.
+
 ### Editing `$mainMod`
 
 Almost every shortcut references `$mainMod` rather than a literal modifier
@@ -358,9 +368,9 @@ back exactly as it was. Backups are named `<original filename>-<timestamp>.hbb`
 and stored in a folder that defaults to `$HOME`; change it with `B` (same
 text field as the other settings above, `~` expanded).
 
-Restoring (`r`) is the one destructive action in hyprbind — it overwrites the
-whole keybindings file — so it's the only command with an extra confirmation
-step instead of committing immediately:
+Restoring (`r`) overwrites the whole keybindings file, so — like deleting a
+shortcut (`x`, see [Deleting a shortcut](#deleting-a-shortcut)) — it asks for
+confirmation instead of committing immediately:
 
 1. `r` lists every `.hbb` file in the backup folder.
 2. Pick one and press Enter to see a confirmation screen naming the backup
@@ -442,10 +452,15 @@ directive; replacing an existing `bindd` description without touching its
 comment; and the Lua cases — replacing an existing `description` entry,
 appending one to a table that has other options but not that one, creating a
 fresh options table from scratch, and preferring an existing trailing
-comment over creating one), and the footer's word-wrapping (items packed
-onto as few lines as fit a given width, none exceeding it, an
-oversized single item still getting its own line rather than being dropped,
-and a label's width counting toward the first line):
+comment over creating one), `x`'s delete confirmation flow (line removal
+preserving every other line and the file's trailing-newline convention, the
+optimistic-concurrency guard refusing a delete if the line changed on disk
+since it was loaded, cancelling leaving the file untouched, and the selection
+landing on a nearby row rather than jumping back to the top), and the
+footer's word-wrapping (items packed onto as few lines as fit a given width,
+none exceeding it, an oversized single item still getting its own line
+rather than being dropped, and a label's width counting toward the first
+line):
 
 ```sh
 cargo test
