@@ -43,6 +43,7 @@ mkdir -p "$INSTALL_DIR"
 install -m 755 "$SRC_DIR/target/release/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
 
 echo "Installed to $INSTALL_DIR/$BIN_NAME"
+echo "Run \"$BIN_NAME --version\" to check what's installed."
 
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
