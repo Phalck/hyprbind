@@ -306,18 +306,18 @@ impl App {
         // for the real keybindings file, rather than just giving up. If that finds one, persist
         // it too: we only get here because the previous choice was already broken, so there's
         // nothing worth preserving by leaving it in place.
-        if app.shortcuts.is_empty() {
-            if let Some(discovered) = keybindings::discover(&home_dir().join(".config/hypr")) {
-                app.source_path = discovered.clone();
-                app.load();
-                if !app.shortcuts.is_empty() {
-                    let saved = app.persist_settings().is_ok();
-                    app.set_status(format!(
-                        "Auto-detected keybindings file: {}{}",
-                        discovered.display(),
-                        if saved { " (saved)." } else { "." }
-                    ));
-                }
+        if app.shortcuts.is_empty()
+            && let Some(discovered) = keybindings::discover(&home_dir().join(".config/hypr"))
+        {
+            app.source_path = discovered.clone();
+            app.load();
+            if !app.shortcuts.is_empty() {
+                let saved = app.persist_settings().is_ok();
+                app.set_status(format!(
+                    "Auto-detected keybindings file: {}{}",
+                    discovered.display(),
+                    if saved { " (saved)." } else { "." }
+                ));
             }
         }
 
