@@ -79,6 +79,11 @@ Once installed, just run:
 hyprbind
 ```
 
+`hyprbind --version` (or `-V`) prints the installed version and the git
+commit it was built from, e.g. `hyprbind 0.1.0 (82f565e)` — useful for
+checking whether re-running the install script actually picked up the
+latest `master`.
+
 To hack on hyprbind itself instead of installing it, build and run it
 in place:
 
@@ -455,6 +460,7 @@ cargo test
 ## Project layout
 
 ```
+build.rs                 bakes the build's git commit hash into --version
 src/
   main.rs               entry point and the key handling loop
   app.rs                application state: loaded shortcuts, selection, errors

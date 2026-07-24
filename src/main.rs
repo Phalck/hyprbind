@@ -17,7 +17,23 @@ use app::{App, Mode};
 /// `App::set_status` can expire and clear itself on its own.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+/// `env!` values baked in by `build.rs`/Cargo at compile time, not runtime config.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const GIT_HASH: &str = env!("HYPRBIND_GIT_HASH");
+
+fn is_version_flag(arg: &str) -> bool {
+    arg == "--version" || arg == "-V"
+}
+
 fn main() -> io::Result<()> {
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|arg| is_version_flag(&arg))
+    {
+        println!("hyprbind {VERSION} ({GIT_HASH})");
+        return Ok(());
+    }
+
     let mut terminal = ratatui::init();
     let mut app = App::new();
     let result = run(&mut terminal, &mut app);
@@ -247,4 +263,22 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> 
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_version_flag_recognizes_long_and_short_forms() {
+        assert!(is_version_flag("--version"));
+        assert!(is_version_flag("-V"));
+    }
+
+    #[test]
+    fn is_version_flag_rejects_anything_else() {
+        assert!(!is_version_flag("-v"));
+        assert!(!is_version_flag("--help"));
+        assert!(!is_version_flag(""));
+    }
 }
