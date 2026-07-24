@@ -71,7 +71,10 @@ pub fn save_to(path: &Path, settings: &Settings) -> io::Result<()> {
         contents.push_str(&format!("source_path = {}\n", source_path.display()));
     }
     if let Some(template_folder) = &settings.template_folder {
-        contents.push_str(&format!("template_folder = {}\n", template_folder.display()));
+        contents.push_str(&format!(
+            "template_folder = {}\n",
+            template_folder.display()
+        ));
     }
     if let Some(backup_folder) = &settings.backup_folder {
         contents.push_str(&format!("backup_folder = {}\n", backup_folder.display()));
@@ -88,7 +91,10 @@ mod tests {
     use super::*;
 
     fn scratch_path(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("hyprbind-config-test-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "hyprbind-config-test-{name}-{}",
+            std::process::id()
+        ))
     }
 
     #[test]
@@ -102,9 +108,18 @@ backup_folder = /home/me/Backups
 terminal_command = kitty --hold
 ";
         let settings = parse(contents);
-        assert_eq!(settings.source_path, Some(PathBuf::from("/home/me/.config/hypr/binds.conf")));
-        assert_eq!(settings.template_folder, Some(PathBuf::from("/home/me/Templates")));
-        assert_eq!(settings.backup_folder, Some(PathBuf::from("/home/me/Backups")));
+        assert_eq!(
+            settings.source_path,
+            Some(PathBuf::from("/home/me/.config/hypr/binds.conf"))
+        );
+        assert_eq!(
+            settings.template_folder,
+            Some(PathBuf::from("/home/me/Templates"))
+        );
+        assert_eq!(
+            settings.backup_folder,
+            Some(PathBuf::from("/home/me/Backups"))
+        );
         assert_eq!(settings.terminal_command, Some("kitty --hold".to_string()));
     }
 

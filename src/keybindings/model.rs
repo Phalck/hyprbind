@@ -148,7 +148,10 @@ impl Shortcut {
     /// comment` rather than a `bindd` description field, so this has to fall back to the comment
     /// the same way the table display does, or `d` would look like it does nothing for them.
     pub fn description_edit_buffer(&self) -> String {
-        self.description_raw.clone().or_else(|| self.comment.clone()).unwrap_or_default()
+        self.description_raw
+            .clone()
+            .or_else(|| self.comment.clone())
+            .unwrap_or_default()
     }
 
     /// Rebuild the source line with its label changed to `text`, everything else (mods, key,
@@ -172,11 +175,19 @@ impl Shortcut {
                 } else {
                     updated.comment = Some(text.to_string());
                 }
-                updated.build_conf_line(&self.mods_raw, &self.key_raw, &self.dispatcher_raw, &self.args_raw)
+                updated.build_conf_line(
+                    &self.mods_raw,
+                    &self.key_raw,
+                    &self.dispatcher_raw,
+                    &self.args_raw,
+                )
             }
             SourceFormat::Lua => {
                 let mut updated = self.clone();
-                if updated.description_raw.is_none() && updated.options_raw.is_none() && updated.comment.is_some() {
+                if updated.description_raw.is_none()
+                    && updated.options_raw.is_none()
+                    && updated.comment.is_some()
+                {
                     // No options table, but there's already a trailing `-- comment`: edit that
                     // rather than creating a table just to hold a description.
                     updated.comment = Some(text.to_string());
@@ -203,7 +214,13 @@ impl Shortcut {
 
     /// Rebuild the full source line from its fields. Dispatches on `format`, since `.conf` and
     /// Lua need entirely different syntax to say the same thing.
-    fn build_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str, args_raw: &str) -> String {
+    fn build_line(
+        &self,
+        mods_raw: &str,
+        key_raw: &str,
+        dispatcher_raw: &str,
+        args_raw: &str,
+    ) -> String {
         match self.format {
             SourceFormat::Conf => self.build_conf_line(mods_raw, key_raw, dispatcher_raw, args_raw),
             SourceFormat::Lua => self.build_lua_line(mods_raw, key_raw, dispatcher_raw),
@@ -213,7 +230,13 @@ impl Shortcut {
     /// Rebuild a `.conf` source line, normalizing separators to a consistent
     /// `field, field, ... # comment` style. This discards any original column-alignment padding
     /// around commas or before the comment; field content itself is always preserved exactly.
-    fn build_conf_line(&self, mods_raw: &str, key_raw: &str, dispatcher_raw: &str, args_raw: &str) -> String {
+    fn build_conf_line(
+        &self,
+        mods_raw: &str,
+        key_raw: &str,
+        dispatcher_raw: &str,
+        args_raw: &str,
+    ) -> String {
         let mut fields = vec![mods_raw.to_string(), key_raw.to_string()];
         if let Some(description) = &self.description_raw {
             fields.push(description.clone());
@@ -322,7 +345,10 @@ fn lua_key_expr(mods_raw: &str, key_raw: &str) -> String {
             .map(|t| t.trim_start_matches('$').to_string())
             .chain(std::iter::once(key_raw.trim_start_matches('$').to_string()))
             .collect();
-        return format!("{var_name} .. \"{}\"", escape_lua_string(&format!(" + {}", rest.join(" + "))));
+        return format!(
+            "{var_name} .. \"{}\"",
+            escape_lua_string(&format!(" + {}", rest.join(" + ")))
+        );
     }
 
     let all: Vec<String> = mods_raw
@@ -578,7 +604,10 @@ mod tests {
         let mut s = shortcut();
         s.dispatcher = "exec".to_string();
         s.args = "~/.config/hypr/scripts/toggle-animations.sh".to_string();
-        assert_eq!(s.exec_command().as_deref(), Some("~/.config/hypr/scripts/toggle-animations.sh"));
+        assert_eq!(
+            s.exec_command().as_deref(),
+            Some("~/.config/hypr/scripts/toggle-animations.sh")
+        );
     }
 
     #[test]
@@ -599,7 +628,8 @@ mod tests {
     #[test]
     fn exec_command_is_none_for_a_non_exec_lua_dispatcher() {
         let mut s = lua_shortcut();
-        s.dispatcher = "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"toggle\" })".to_string();
+        s.dispatcher =
+            "hl.dsp.window.fullscreen({ mode = \"fullscreen\", action = \"toggle\" })".to_string();
         assert_eq!(s.exec_command(), None);
     }
 
@@ -629,7 +659,10 @@ mod tests {
 
     #[test]
     fn description_edit_buffer_uses_the_existing_lua_description() {
-        assert_eq!(lua_shortcut().description_edit_buffer(), "Open the terminal");
+        assert_eq!(
+            lua_shortcut().description_edit_buffer(),
+            "Open the terminal"
+        );
     }
 
     #[test]
@@ -717,8 +750,10 @@ mod tests {
     fn lua_with_key_escapes_embedded_quotes_in_the_key_field() {
         // A `"` typed into the key field must not be able to break out of the Lua string literal
         // and get interpreted as real Lua the next time the keybindings file loads.
-        let updated = lua_shortcut()
-            .with_key("$mainMod", "Q\" }); hl.dsp.exec_cmd(\"touch /tmp/pwned\")--");
+        let updated = lua_shortcut().with_key(
+            "$mainMod",
+            "Q\" }); hl.dsp.exec_cmd(\"touch /tmp/pwned\")--",
+        );
         assert_eq!(
             updated,
             "hl.bind(mainMod .. \" + Q\\\" }); hl.dsp.exec_cmd(\\\"touch /tmp/pwned\\\")--\", hl.dsp.exec_cmd(\"~/.config/ml4w/settings/terminal.sh\"), { description = \"Open the terminal\" })"

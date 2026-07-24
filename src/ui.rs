@@ -20,7 +20,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_title(frame, app, chunks[0]);
 
     match app.mode {
-        Mode::TemplateSaveSelect | Mode::TemplatePreview => draw_template_picker(frame, app, chunks[1]),
+        Mode::TemplateSaveSelect | Mode::TemplatePreview => {
+            draw_template_picker(frame, app, chunks[1])
+        }
         Mode::TemplateList => draw_template_list(frame, app, chunks[1]),
         Mode::BackupList => draw_backup_list(frame, app, chunks[1]),
         Mode::BackupConfirm => draw_backup_confirm(frame, app, chunks[1]),
@@ -28,7 +30,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         _ => {
             let visible_len = app.visible().len();
             if app.shortcuts.is_empty() {
-                draw_message(frame, chunks[1], app.error.as_deref().unwrap_or("No shortcuts to display."));
+                draw_message(
+                    frame,
+                    chunks[1],
+                    app.error.as_deref().unwrap_or("No shortcuts to display."),
+                );
             } else if visible_len == 0 {
                 draw_message(
                     frame,
@@ -261,7 +267,10 @@ fn draw_template_list(frame: &mut Frame, app: &mut App, area: Rect) {
         draw_message(
             frame,
             area,
-            &format!("No .hbt templates found in {}.", app.template_folder.display()),
+            &format!(
+                "No .hbt templates found in {}.",
+                app.template_folder.display()
+            ),
         );
         return;
     }
@@ -339,7 +348,11 @@ fn draw_backup_confirm(frame: &mut Frame, app: &App, area: Rect) {
 
     let body = Paragraph::new(message)
         .style(Style::default().fg(Color::Yellow))
-        .block(Block::default().borders(Borders::ALL).title("Confirm restore"));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Confirm restore"),
+        );
     frame.render_widget(body, area);
 }
 
@@ -369,7 +382,11 @@ fn draw_duplicate_confirm(frame: &mut Frame, app: &App, area: Rect) {
 
     let body = Paragraph::new(message)
         .style(Style::default().fg(Color::Yellow))
-        .block(Block::default().borders(Borders::ALL).title("Duplicate keybind"));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Duplicate keybind"),
+        );
     frame.render_widget(body, area);
 }
 
@@ -487,7 +504,11 @@ fn wrap_hints(prefix: &str, items: &[&str], max_width: usize) -> Vec<String> {
 
     for item in items {
         let item_width = item.chars().count();
-        let needed = if current_has_items { sep_width + item_width } else { item_width };
+        let needed = if current_has_items {
+            sep_width + item_width
+        } else {
+            item_width
+        };
         if current_has_items && current_width + needed > max_width {
             lines.push(std::mem::take(&mut current));
             current_width = 0;
@@ -516,17 +537,22 @@ fn edit_footer_lines(field: &str, app: &App) -> Vec<Line<'static>> {
 
     let prompt = Line::from(vec![
         Span::raw(format!("editing {field}: {before}")),
-        Span::styled(under_cursor, Style::default().add_modifier(Modifier::REVERSED)),
+        Span::styled(
+            under_cursor,
+            Style::default().add_modifier(Modifier::REVERSED),
+        ),
         Span::raw(after),
     ]);
 
-    vec![prompt, Line::from("Enter save   Esc cancel   ←/→ move   Home/End jump")]
+    vec![
+        prompt,
+        Line::from("Enter save   Esc cancel   ←/→ move   Home/End jump"),
+    ]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn wrap_hints_fits_everything_on_one_line_when_there_is_room() {
@@ -536,21 +562,39 @@ mod tests {
 
     #[test]
     fn wrap_hints_wraps_onto_multiple_lines_and_none_exceed_max_width() {
-        let items = ["e edit key", "a edit target", "d edit description", "q quit"];
+        let items = [
+            "e edit key",
+            "a edit target",
+            "d edit description",
+            "q quit",
+        ];
         let lines = wrap_hints("", &items, 20);
-        assert!(lines.len() > 1, "expected wrapping onto multiple lines, got {lines:?}");
+        assert!(
+            lines.len() > 1,
+            "expected wrapping onto multiple lines, got {lines:?}"
+        );
         for line in &lines {
-            assert!(line.chars().count() <= 20, "line exceeds max_width: {line:?}");
+            assert!(
+                line.chars().count() <= 20,
+                "line exceeds max_width: {line:?}"
+            );
         }
         // Every item must still appear somewhere; wrapping must never drop content.
         for item in items {
-            assert!(lines.iter().any(|line| line.contains(item)), "missing item: {item}");
+            assert!(
+                lines.iter().any(|line| line.contains(item)),
+                "missing item: {item}"
+            );
         }
     }
 
     #[test]
     fn wrap_hints_forces_an_oversized_item_onto_its_own_line_rather_than_dropping_it() {
-        let lines = wrap_hints("", &["short", "a very long item that alone exceeds the width"], 10);
+        let lines = wrap_hints(
+            "",
+            &["short", "a very long item that alone exceeds the width"],
+            10,
+        );
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0], "short");
         assert_eq!(lines[1], "a very long item that alone exceeds the width");

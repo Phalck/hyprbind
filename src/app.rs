@@ -85,7 +85,8 @@ fn expand_home(input: &str) -> PathBuf {
 
 /// Common terminal emulators to look for on `$PATH`, in preference order, when nothing more
 /// specific (`$TERMINAL`, a persisted setting) says which one to use.
-const CANDIDATE_TERMINALS: [&str; 6] = ["kitty", "alacritty", "wezterm", "foot", "konsole", "xterm"];
+const CANDIDATE_TERMINALS: [&str; 6] =
+    ["kitty", "alacritty", "wezterm", "foot", "konsole", "xterm"];
 
 /// Pick a default terminal command: `$TERMINAL` if it's set to something non-empty, otherwise
 /// the first of `CANDIDATE_TERMINALS` found as a file in some `$PATH` entry. `None` if neither
@@ -264,7 +265,10 @@ impl App {
         let config_path = config::config_path();
         let settings = config::load_from(&config_path);
         let mut app = Self {
-            source_path: settings.source_path.clone().unwrap_or_else(default_keybindings_path),
+            source_path: settings
+                .source_path
+                .clone()
+                .unwrap_or_else(default_keybindings_path),
             shortcuts: Vec::new(),
             variables: Vec::new(),
             table_state: TableState::default(),
@@ -369,7 +373,10 @@ impl App {
             self.shortcuts.iter().collect()
         } else {
             let query = self.query.to_lowercase();
-            self.shortcuts.iter().filter(|s| s.matches(&query)).collect()
+            self.shortcuts
+                .iter()
+                .filter(|s| s.matches(&query))
+                .collect()
         }
     }
 
@@ -402,7 +409,10 @@ impl App {
     /// the normal key-hint menu on its own. Call this on every tick of the UI loop, not just on
     /// key presses, since the whole point is that it fires without user input.
     pub fn clear_expired_status(&mut self) {
-        if self.status_set_at.is_some_and(|set_at| set_at.elapsed() >= STATUS_TIMEOUT) {
+        if self
+            .status_set_at
+            .is_some_and(|set_at| set_at.elapsed() >= STATUS_TIMEOUT)
+        {
             self.clear_status();
         }
     }
@@ -570,7 +580,8 @@ impl App {
                 if let Some(conflict) = self.check_key_conflict(line_no, &mods_raw, &key_raw) {
                     self.duplicate_conflict_line = Some(conflict.conflicting_line);
                     self.duplicate_attempted_combo = conflict.attempted_display;
-                    self.duplicate_fix_display = conflict.fix.as_ref().map(|f| f.display_combo.clone());
+                    self.duplicate_fix_display =
+                        conflict.fix.as_ref().map(|f| f.display_combo.clone());
                     self.duplicate_fix_mods_raw = conflict.fix.map(|f| f.mods_raw);
                     self.duplicate_key_raw = key_raw;
                     self.mode = Mode::DuplicateKeyConfirm;
@@ -582,13 +593,17 @@ impl App {
                     .find(|s| s.line == line_no)
                     .map(|shortcut| shortcut.with_key(&mods_raw, &key_raw))
             }
-            Mode::EditTarget => self.shortcuts.iter().find(|s| s.line == line_no).map(|shortcut| {
-                let (dispatcher_raw, args_raw) = match self.edit_buffer.split_once(',') {
-                    Some((dispatcher, args)) => (dispatcher.trim(), args.trim()),
-                    None => (self.edit_buffer.trim(), ""),
-                };
-                shortcut.with_target(dispatcher_raw, args_raw)
-            }),
+            Mode::EditTarget => self
+                .shortcuts
+                .iter()
+                .find(|s| s.line == line_no)
+                .map(|shortcut| {
+                    let (dispatcher_raw, args_raw) = match self.edit_buffer.split_once(',') {
+                        Some((dispatcher, args)) => (dispatcher.trim(), args.trim()),
+                        None => (self.edit_buffer.trim(), ""),
+                    };
+                    shortcut.with_target(dispatcher_raw, args_raw)
+                }),
             Mode::EditDescription => {
                 let description = self.edit_buffer.trim();
                 if description.is_empty() {
@@ -600,18 +615,23 @@ impl App {
                     .find(|s| s.line == line_no)
                     .map(|shortcut| shortcut.with_description(description))
             }
-            Mode::EditMainMod => self.variables.iter().find(|v| v.line == line_no).map(|variable| {
-                let value = self.edit_buffer.trim();
-                let mut line = match variable.format {
-                    SourceFormat::Conf => format!("${} = {value}", variable.name),
-                    SourceFormat::Lua => format!("local {} = \"{value}\"", variable.name),
-                };
-                if let Some(comment) = &variable.comment {
-                    line.push_str(" -- ");
-                    line.push_str(comment);
-                }
-                line
-            }),
+            Mode::EditMainMod => {
+                self.variables
+                    .iter()
+                    .find(|v| v.line == line_no)
+                    .map(|variable| {
+                        let value = self.edit_buffer.trim();
+                        let mut line = match variable.format {
+                            SourceFormat::Conf => format!("${} = {value}", variable.name),
+                            SourceFormat::Lua => format!("local {} = \"{value}\"", variable.name),
+                        };
+                        if let Some(comment) = &variable.comment {
+                            line.push_str(" -- ");
+                            line.push_str(comment);
+                        }
+                        line
+                    })
+            }
             _ => None,
         };
 
@@ -626,7 +646,12 @@ impl App {
             .iter()
             .find(|s| s.line == line_no)
             .map(|s| s.raw.as_str())
-            .or_else(|| self.variables.iter().find(|v| v.line == line_no).map(|v| v.raw.as_str()))
+            .or_else(|| {
+                self.variables
+                    .iter()
+                    .find(|v| v.line == line_no)
+                    .map(|v| v.raw.as_str())
+            })
     }
 
     /// Write `new_line` to `source_path` at `editing_line` (if present), report the result, and
@@ -640,7 +665,12 @@ impl App {
         match new_line {
             Some(new_line) => {
                 let expected_old_line = self.expected_line_at(line_no).map(str::to_string);
-                match write_line(&self.source_path, line_no, expected_old_line.as_deref(), &new_line) {
+                match write_line(
+                    &self.source_path,
+                    line_no,
+                    expected_old_line.as_deref(),
+                    &new_line,
+                ) {
                     Ok(()) => {
                         self.set_status("Saved.".to_string());
                         self.reload_and_reselect(self.resume_line.unwrap_or(line_no));
@@ -665,7 +695,12 @@ impl App {
     /// Whether `mods_raw`/`key_raw` (as typed into the "edit key" field) would resolve to a
     /// combo already used by some *other* shortcut (`editing_line` is excluded, so re-saving a
     /// shortcut's own unchanged key is never flagged against itself).
-    fn check_key_conflict(&self, editing_line: usize, mods_raw: &str, key_raw: &str) -> Option<KeyConflict> {
+    fn check_key_conflict(
+        &self,
+        editing_line: usize,
+        mods_raw: &str,
+        key_raw: &str,
+    ) -> Option<KeyConflict> {
         let mods = self.resolve_mods(mods_raw);
         let key = self.resolve_vars(key_raw);
 
@@ -707,7 +742,11 @@ impl App {
                 })
             });
 
-        Some(KeyConflict { conflicting_line, attempted_display, fix })
+        Some(KeyConflict {
+            conflicting_line,
+            attempted_display,
+            fix,
+        })
     }
 
     /// Resolve `$VAR` references in `raw` against the currently-loaded variables, mirroring how
@@ -732,7 +771,9 @@ impl App {
     /// modifier and save. If there's nothing to accept (no unused modifier resolved the
     /// conflict), this just cancels instead.
     pub fn accept_duplicate_fix(&mut self) {
-        let (Some(mods_raw), Some(line_no)) = (self.duplicate_fix_mods_raw.clone(), self.editing_line) else {
+        let (Some(mods_raw), Some(line_no)) =
+            (self.duplicate_fix_mods_raw.clone(), self.editing_line)
+        else {
             self.cancel_duplicate_confirm();
             return;
         };
@@ -791,7 +832,8 @@ impl App {
             return;
         }
 
-        let line = format!("bind = , {NEW_SHORTCUT_KEY}, {NEW_SHORTCUT_DISPATCHER} # {description}");
+        let line =
+            format!("bind = , {NEW_SHORTCUT_KEY}, {NEW_SHORTCUT_DISPATCHER} # {description}");
         match append_lines(&self.source_path, "# Added via hyprbind", &[line]) {
             Ok(()) => {
                 self.load();
@@ -1009,7 +1051,9 @@ impl App {
             .collect();
         let count = lines.len();
 
-        let path = self.template_folder.join(format!("{name}.{TEMPLATE_EXTENSION}"));
+        let path = self
+            .template_folder
+            .join(format!("{name}.{TEMPLATE_EXTENSION}"));
         match write_template(&self.template_folder, &path, &lines) {
             Ok(()) => {
                 self.set_status(format!("Saved {count} shortcut(s) to {}.", path.display()));
@@ -1080,7 +1124,8 @@ impl App {
     pub fn apply_template_selection(&mut self) {
         if self.source_format() == SourceFormat::Lua {
             self.set_status(
-                "Applying templates isn't supported yet for Lua-format keybinding files.".to_string(),
+                "Applying templates isn't supported yet for Lua-format keybinding files."
+                    .to_string(),
             );
             self.cancel_template();
             return;
@@ -1096,7 +1141,11 @@ impl App {
             if !self.template_selected.contains(&candidate.line) {
                 continue;
             }
-            if self.shortcuts.iter().any(|existing| existing.same_combo(candidate)) {
+            if self
+                .shortcuts
+                .iter()
+                .any(|existing| existing.same_combo(candidate))
+            {
                 skipped += 1;
             } else {
                 lines.push(candidate.resolved_line());
@@ -1104,7 +1153,9 @@ impl App {
         }
 
         if lines.is_empty() {
-            self.set_status(format!("Nothing applied: {skipped} shortcut(s) already bound."));
+            self.set_status(format!(
+                "Nothing applied: {skipped} shortcut(s) already bound."
+            ));
             self.cancel_template();
             return;
         }
@@ -1196,7 +1247,10 @@ impl App {
     /// comments, `$VAR` definitions, exact formatting — not just the shortcuts we understand.
     pub fn create_backup(&mut self) {
         if let Err(err) = fs::create_dir_all(&self.backup_folder) {
-            self.set_status(format!("Couldn't use {}: {err}", self.backup_folder.display()));
+            self.set_status(format!(
+                "Couldn't use {}: {err}",
+                self.backup_folder.display()
+            ));
             return;
         }
 
@@ -1210,7 +1264,10 @@ impl App {
         match fs::copy(&self.source_path, &path) {
             Ok(_) => self.set_status(format!("Backed up to {}.", path.display())),
             Err(err) => {
-                self.set_status(format!("Backup failed: couldn't read {}: {err}", self.source_path.display()));
+                self.set_status(format!(
+                    "Backup failed: couldn't read {}: {err}",
+                    self.source_path.display()
+                ));
             }
         }
     }
@@ -1347,7 +1404,9 @@ impl App {
             return;
         };
         let Some(dir) = script_directory(&command) else {
-            self.set_status("Not a script: couldn't find a script file in this command.".to_string());
+            self.set_status(
+                "Not a script: couldn't find a script file in this command.".to_string(),
+            );
             return;
         };
         let Some(terminal_command) = self.terminal_command.clone() else {
@@ -1366,7 +1425,12 @@ impl App {
 /// and whether the file ended with a trailing newline. Returns `None` if `line_no` is out of
 /// range for `contents`, or if `expected_old_line` is given and doesn't match what's actually
 /// there — either way, the file changed on disk since it was parsed.
-fn replace_line(contents: &str, line_no: usize, expected_old_line: Option<&str>, new_line: &str) -> Option<String> {
+fn replace_line(
+    contents: &str,
+    line_no: usize,
+    expected_old_line: Option<&str>,
+    new_line: &str,
+) -> Option<String> {
     let mut lines: Vec<&str> = contents.lines().collect();
     let idx = line_no.checked_sub(1)?;
     if idx >= lines.len() {
@@ -1391,14 +1455,20 @@ fn replace_line(contents: &str, line_no: usize, expected_old_line: Option<&str>,
 /// refused — guards against clobbering a change made by another hyprbind instance or a hand edit
 /// since this line was last loaded (the file can change without its line count changing, which a
 /// bounds check alone wouldn't catch).
-fn write_line(path: &Path, line_no: usize, expected_old_line: Option<&str>, new_line: &str) -> io::Result<()> {
+fn write_line(
+    path: &Path,
+    line_no: usize,
+    expected_old_line: Option<&str>,
+    new_line: &str,
+) -> io::Result<()> {
     let contents = fs::read_to_string(path)?;
-    let updated = replace_line(&contents, line_no, expected_old_line, new_line).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "source file changed on disk; reload and try again",
-        )
-    })?;
+    let updated =
+        replace_line(&contents, line_no, expected_old_line, new_line).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "source file changed on disk; reload and try again",
+            )
+        })?;
     write_atomic(path, &updated)
 }
 
@@ -1498,31 +1568,47 @@ mod tests {
 
     #[test]
     fn script_directory_resolves_a_direct_script_invocation() {
-        let script = std::env::temp_dir()
-            .join(format!("hyprbind-test-script-direct-{}.sh", std::process::id()));
+        let script = std::env::temp_dir().join(format!(
+            "hyprbind-test-script-direct-{}.sh",
+            std::process::id()
+        ));
         fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
 
-        assert_eq!(script_directory(script.to_str().unwrap()), script.parent().map(Path::to_path_buf));
+        assert_eq!(
+            script_directory(script.to_str().unwrap()),
+            script.parent().map(Path::to_path_buf)
+        );
 
         fs::remove_file(&script).unwrap();
     }
 
     #[test]
     fn script_directory_resolves_a_script_run_through_an_interpreter() {
-        let script = std::env::temp_dir()
-            .join(format!("hyprbind-test-script-interp-{}.sh", std::process::id()));
+        let script = std::env::temp_dir().join(format!(
+            "hyprbind-test-script-interp-{}.sh",
+            std::process::id()
+        ));
         fs::write(&script, "echo hi\n").unwrap();
         let command = format!("bash {}", script.display());
 
-        assert_eq!(script_directory(&command), script.parent().map(Path::to_path_buf));
+        assert_eq!(
+            script_directory(&command),
+            script.parent().map(Path::to_path_buf)
+        );
 
         fs::remove_file(&script).unwrap();
     }
 
     #[test]
     fn script_directory_is_none_without_a_file_token() {
-        assert_eq!(script_directory("hyprctl activewindow | grep pid | xargs kill"), None);
-        assert_eq!(script_directory("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), None);
+        assert_eq!(
+            script_directory("hyprctl activewindow | grep pid | xargs kill"),
+            None
+        );
+        assert_eq!(
+            script_directory("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"),
+            None
+        );
     }
 
     fn edit_app() -> App {
@@ -1698,8 +1784,10 @@ mod tests {
 
     #[test]
     fn save_source_path_rejects_a_file_with_zero_shortcuts_and_keeps_the_old_one() {
-        let path = std::env::temp_dir()
-            .join(format!("hyprbind-test-source-empty-{}.conf", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "hyprbind-test-source-empty-{}.conf",
+            std::process::id()
+        ));
         fs::write(&path, "# just a comment\n").unwrap();
 
         let mut app = edit_app();
@@ -1709,7 +1797,11 @@ mod tests {
         app.save_source_path();
 
         assert_eq!(app.source_path, original_path);
-        assert_eq!(app.shortcuts.len(), 1, "old shortcuts must survive a rejected path");
+        assert_eq!(
+            app.shortcuts.len(),
+            1,
+            "old shortcuts must survive a rejected path"
+        );
         assert!(app.status.is_some());
 
         fs::remove_file(&path).unwrap();
@@ -1730,8 +1822,10 @@ mod tests {
 
     #[test]
     fn save_source_path_switches_to_a_valid_file() {
-        let path = std::env::temp_dir()
-            .join(format!("hyprbind-test-source-valid-{}.conf", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "hyprbind-test-source-valid-{}.conf",
+            std::process::id()
+        ));
         fs::write(&path, "bind = SUPER, Q, killactive\n").unwrap();
 
         let mut app = edit_app();
@@ -1747,11 +1841,15 @@ mod tests {
 
     #[test]
     fn save_source_path_persists_to_config_path() {
-        let target = std::env::temp_dir()
-            .join(format!("hyprbind-test-source-persist-target-{}.conf", std::process::id()));
+        let target = std::env::temp_dir().join(format!(
+            "hyprbind-test-source-persist-target-{}.conf",
+            std::process::id()
+        ));
         fs::write(&target, "bind = SUPER, Q, killactive\n").unwrap();
-        let config_file = std::env::temp_dir()
-            .join(format!("hyprbind-test-source-persist-config-{}", std::process::id()));
+        let config_file = std::env::temp_dir().join(format!(
+            "hyprbind-test-source-persist-config-{}",
+            std::process::id()
+        ));
 
         let mut app = edit_app();
         app.config_path = config_file.clone();
@@ -1767,10 +1865,14 @@ mod tests {
 
     #[test]
     fn save_template_folder_persists_to_config_path() {
-        let folder = std::env::temp_dir()
-            .join(format!("hyprbind-test-template-persist-folder-{}", std::process::id()));
-        let config_file = std::env::temp_dir()
-            .join(format!("hyprbind-test-template-persist-config-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!(
+            "hyprbind-test-template-persist-folder-{}",
+            std::process::id()
+        ));
+        let config_file = std::env::temp_dir().join(format!(
+            "hyprbind-test-template-persist-config-{}",
+            std::process::id()
+        ));
 
         let mut app = edit_app();
         app.config_path = config_file.clone();
@@ -1795,10 +1897,12 @@ mod tests {
 
     #[test]
     fn create_backup_copies_the_source_file_byte_for_byte() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-source-{}.conf", std::process::id()));
-        let backup_dir = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-dir-{}", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-backup-source-{}.conf",
+            std::process::id()
+        ));
+        let backup_dir =
+            std::env::temp_dir().join(format!("hyprbind-test-backup-dir-{}", std::process::id()));
         let contents = "$mainMod = SUPER\n# a comment\nbind = $mainMod, Q, killactive\n";
         fs::write(&source, contents).unwrap();
 
@@ -1807,12 +1911,26 @@ mod tests {
         app.backup_folder = backup_dir.clone();
         app.create_backup();
 
-        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Backed up to ")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("Backed up to "))
+        );
 
-        let entries: Vec<_> = fs::read_dir(&backup_dir).unwrap().filter_map(|e| e.ok()).collect();
-        assert_eq!(entries.len(), 1, "exactly one backup file should have been created");
+        let entries: Vec<_> = fs::read_dir(&backup_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "exactly one backup file should have been created"
+        );
         let backup_path = entries[0].path();
-        assert_eq!(backup_path.extension().and_then(|e| e.to_str()), Some(BACKUP_EXTENSION));
+        assert_eq!(
+            backup_path.extension().and_then(|e| e.to_str()),
+            Some(BACKUP_EXTENSION)
+        );
         assert_eq!(fs::read_to_string(&backup_path).unwrap(), contents);
 
         fs::remove_file(&source).unwrap();
@@ -1821,10 +1939,14 @@ mod tests {
 
     #[test]
     fn create_backup_does_not_overwrite_an_existing_backup_with_the_same_timestamp() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-collision-source-{}.conf", std::process::id()));
-        let backup_dir = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-collision-dir-{}", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-backup-collision-source-{}.conf",
+            std::process::id()
+        ));
+        let backup_dir = std::env::temp_dir().join(format!(
+            "hyprbind-test-backup-collision-dir-{}",
+            std::process::id()
+        ));
         fs::create_dir_all(&backup_dir).unwrap();
         fs::write(&source, "bind = $mainMod, Q, killactive\n").unwrap();
 
@@ -1844,8 +1966,15 @@ mod tests {
             "previous backup contents",
             "the earlier backup must survive untouched"
         );
-        let entries: Vec<_> = fs::read_dir(&backup_dir).unwrap().filter_map(|e| e.ok()).collect();
-        assert_eq!(entries.len(), 2, "the new backup should land alongside the old one, not replace it");
+        let entries: Vec<_> = fs::read_dir(&backup_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(
+            entries.len(),
+            2,
+            "the new backup should land alongside the old one, not replace it"
+        );
 
         fs::remove_file(&source).unwrap();
         fs::remove_dir_all(&backup_dir).unwrap();
@@ -1854,15 +1983,21 @@ mod tests {
     #[test]
     fn create_backup_reports_failure_when_source_is_unreadable() {
         let missing = std::env::temp_dir().join("hyprbind-test-backup-missing-hopefully.conf");
-        let backup_dir = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-dir-missing-{}", std::process::id()));
+        let backup_dir = std::env::temp_dir().join(format!(
+            "hyprbind-test-backup-dir-missing-{}",
+            std::process::id()
+        ));
 
         let mut app = edit_app();
         app.source_path = missing;
         app.backup_folder = backup_dir.clone();
         app.create_backup();
 
-        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Backup failed")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("Backup failed"))
+        );
 
         fs::remove_dir_all(&backup_dir).unwrap();
     }
@@ -1882,10 +2017,14 @@ mod tests {
 
     #[test]
     fn restore_backup_overwrites_source_with_backup_contents_and_reloads() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-restore-source-{}.conf", std::process::id()));
-        let backup = std::env::temp_dir()
-            .join(format!("hyprbind-test-restore-backup-{}.hbb", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-restore-source-{}.conf",
+            std::process::id()
+        ));
+        let backup = std::env::temp_dir().join(format!(
+            "hyprbind-test-restore-backup-{}.hbb",
+            std::process::id()
+        ));
         fs::write(&source, "bind = SUPER, Q, killactive\n").unwrap();
         let backup_contents = "bind = SUPER, W, exec, foo\nbind = SUPER, E, exec, bar\n";
         fs::write(&backup, backup_contents).unwrap();
@@ -1901,7 +2040,11 @@ mod tests {
         assert_eq!(app.shortcuts.len(), 2);
         assert_eq!(app.mode, Mode::Normal);
         assert!(app.backup_selected_path.is_none());
-        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Restored ")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("Restored "))
+        );
 
         fs::remove_file(&source).unwrap();
         fs::remove_file(&backup).unwrap();
@@ -1909,8 +2052,10 @@ mod tests {
 
     #[test]
     fn restore_backup_reports_failure_when_backup_is_unreadable() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-restore-bad-source-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-restore-bad-source-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = SUPER, Q, killactive\n").unwrap();
         let missing_backup =
             std::env::temp_dir().join("hyprbind-test-restore-missing-backup-hopefully.hbb");
@@ -1923,18 +2068,29 @@ mod tests {
 
         app.restore_backup();
 
-        assert_eq!(fs::read_to_string(&source).unwrap(), "bind = SUPER, Q, killactive\n");
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("Couldn't read")));
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            "bind = SUPER, Q, killactive\n"
+        );
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("Couldn't read"))
+        );
 
         fs::remove_file(&source).unwrap();
     }
 
     #[test]
     fn save_backup_folder_persists_to_config_path() {
-        let folder = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-folder-persist-{}", std::process::id()));
-        let config_file = std::env::temp_dir()
-            .join(format!("hyprbind-test-backup-folder-persist-config-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!(
+            "hyprbind-test-backup-folder-persist-{}",
+            std::process::id()
+        ));
+        let config_file = std::env::temp_dir().join(format!(
+            "hyprbind-test-backup-folder-persist-config-{}",
+            std::process::id()
+        ));
 
         let mut app = edit_app();
         app.config_path = config_file.clone();
@@ -1950,8 +2106,10 @@ mod tests {
 
     #[test]
     fn save_terminal_command_persists_to_config_path() {
-        let config_file = std::env::temp_dir()
-            .join(format!("hyprbind-test-terminal-command-persist-config-{}", std::process::id()));
+        let config_file = std::env::temp_dir().join(format!(
+            "hyprbind-test-terminal-command-persist-config-{}",
+            std::process::id()
+        ));
 
         let mut app = edit_app();
         app.config_path = config_file.clone();
@@ -2005,9 +2163,15 @@ mod tests {
 
     #[test]
     fn save_edit_editkey_no_conflict_saves_normally() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-dupkey-noconflict-{}.conf", std::process::id()));
-        fs::write(&source, "bind = $mainMod, Q, exec, foo\nbind = $mainMod, W, exec, foo\n").unwrap();
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-dupkey-noconflict-{}.conf",
+            std::process::id()
+        ));
+        fs::write(
+            &source,
+            "bind = $mainMod, Q, exec, foo\nbind = $mainMod, W, exec, foo\n",
+        )
+        .unwrap();
 
         let mut app = edit_app();
         app.source_path = source.clone();
@@ -2028,8 +2192,10 @@ mod tests {
 
     #[test]
     fn save_edit_refuses_to_overwrite_a_line_changed_since_load() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-concurrent-writer-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-concurrent-writer-{}.conf",
+            std::process::id()
+        ));
         // Loaded by hyprbind with this content...
         fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
@@ -2061,8 +2227,10 @@ mod tests {
 
     #[test]
     fn save_edit_editkey_on_a_lua_source_rewrites_the_hl_bind_call_in_place() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-lua-editkey-{}.lua", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-lua-editkey-{}.lua",
+            std::process::id()
+        ));
         fs::write(
             &source,
             "local mainMod = \"SUPER\"\nhl.bind(mainMod .. \" + Q\", hl.dsp.exec_cmd(\"kill.sh\"), { description = \"Kill\" })\n",
@@ -2149,8 +2317,10 @@ mod tests {
 
     #[test]
     fn save_edit_editdescription_sets_a_comment_on_a_plain_bind_without_upgrading_it() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-editdescription-comment-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-editdescription-comment-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -2164,15 +2334,20 @@ mod tests {
 
         assert_eq!(app.status.as_deref(), Some("Saved."));
         let contents = fs::read_to_string(&source).unwrap();
-        assert_eq!(contents, "bind = $mainMod, Q, exec, foo # Kill active window\n");
+        assert_eq!(
+            contents,
+            "bind = $mainMod, Q, exec, foo # Kill active window\n"
+        );
 
         fs::remove_file(&source).unwrap();
     }
 
     #[test]
     fn save_edit_editdescription_replaces_an_existing_comment() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-editdescription-replace-comment-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-editdescription-replace-comment-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = $mainMod, Q, exec, foo # Old comment\n").unwrap();
 
         let mut app = edit_app();
@@ -2196,8 +2371,10 @@ mod tests {
 
     #[test]
     fn save_edit_editdescription_rejects_empty_input_and_leaves_the_file_untouched() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-editdescription-empty-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-editdescription-empty-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -2209,16 +2386,25 @@ mod tests {
 
         app.save_edit();
 
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("can't be empty")));
-        assert_eq!(fs::read_to_string(&source).unwrap(), "bind = SUPER, Q, exec, foo\n");
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("can't be empty"))
+        );
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            "bind = SUPER, Q, exec, foo\n"
+        );
 
         fs::remove_file(&source).unwrap();
     }
 
     #[test]
     fn save_edit_editdescription_on_a_lua_source_updates_only_the_options_table() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-editdescription-lua-{}.lua", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-editdescription-lua-{}.lua",
+            std::process::id()
+        ));
         fs::write(
             &source,
             "hl.bind(\"CTRL + ALT + T\", hl.dsp.exec_cmd(\"themes.sh\"), { description = \"Old\" })\n",
@@ -2254,7 +2440,11 @@ mod tests {
         app.shortcuts = vec![sample_shortcut(1, "Q")];
         app.start_template_save_select();
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("Lua-format"))
+        );
     }
 
     #[test]
@@ -2266,7 +2456,11 @@ mod tests {
         app.template_selected.insert(1);
         app.apply_template_selection();
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("Lua-format"))
+        );
     }
 
     #[test]
@@ -2280,7 +2474,11 @@ mod tests {
 
         app.open_terminal_at_script();
 
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("doesn't run exec")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("doesn't run exec"))
+        );
     }
 
     #[test]
@@ -2291,13 +2489,19 @@ mod tests {
 
         app.open_terminal_at_script();
 
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("couldn't find a script file")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("couldn't find a script file"))
+        );
     }
 
     #[test]
     fn open_terminal_at_script_reports_no_terminal_command_set() {
-        let script = std::env::temp_dir()
-            .join(format!("hyprbind-test-open-terminal-noterm-{}.sh", std::process::id()));
+        let script = std::env::temp_dir().join(format!(
+            "hyprbind-test-open-terminal-noterm-{}.sh",
+            std::process::id()
+        ));
         fs::write(&script, "echo hi\n").unwrap();
 
         let mut app = edit_app();
@@ -2309,15 +2513,21 @@ mod tests {
 
         app.open_terminal_at_script();
 
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("No terminal command set")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("No terminal command set"))
+        );
 
         fs::remove_file(&script).unwrap();
     }
 
     #[test]
     fn open_terminal_at_script_spawns_the_terminal_command_at_the_scripts_directory() {
-        let script = std::env::temp_dir()
-            .join(format!("hyprbind-test-open-terminal-ok-{}.sh", std::process::id()));
+        let script = std::env::temp_dir().join(format!(
+            "hyprbind-test-open-terminal-ok-{}.sh",
+            std::process::id()
+        ));
         fs::write(&script, "echo hi\n").unwrap();
 
         let mut app = edit_app();
@@ -2333,7 +2543,9 @@ mod tests {
 
         let expected_dir = script.parent().unwrap().display().to_string();
         assert!(
-            app.status.as_deref().is_some_and(|s| s == format!("Opened a terminal at {expected_dir}.")),
+            app.status
+                .as_deref()
+                .is_some_and(|s| s == format!("Opened a terminal at {expected_dir}.")),
             "unexpected status: {:?}",
             app.status
         );
@@ -2343,8 +2555,10 @@ mod tests {
 
     #[test]
     fn save_edit_editkey_unchanged_combo_is_not_flagged_as_a_self_conflict() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-dupkey-selfsame-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-dupkey-selfsame-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -2356,7 +2570,11 @@ mod tests {
 
         app.save_edit();
 
-        assert_eq!(app.mode, Mode::Normal, "saving a shortcut's own unchanged combo isn't a conflict");
+        assert_eq!(
+            app.mode,
+            Mode::Normal,
+            "saving a shortcut's own unchanged combo isn't a conflict"
+        );
         assert_eq!(app.status.as_deref(), Some("Saved."));
 
         fs::remove_file(&source).unwrap();
@@ -2378,7 +2596,10 @@ mod tests {
         assert_eq!(app.mode, Mode::DuplicateKeyConfirm);
         assert_eq!(app.duplicate_conflict_line, Some(2));
         assert_eq!(app.duplicate_attempted_combo, "SUPER + W");
-        assert_eq!(app.duplicate_fix_display.as_deref(), Some("SUPER + SHIFT + W"));
+        assert_eq!(
+            app.duplicate_fix_display.as_deref(),
+            Some("SUPER + SHIFT + W")
+        );
     }
 
     #[test]
@@ -2433,8 +2654,10 @@ mod tests {
 
     #[test]
     fn accept_duplicate_fix_writes_the_fixed_combo_and_returns_to_normal() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-dupkey-acceptfix-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-dupkey-acceptfix-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -2473,8 +2696,10 @@ mod tests {
 
     #[test]
     fn cancel_duplicate_confirm_writes_nothing_and_resets_state() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-dupkey-cancel-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-dupkey-cancel-{}.conf",
+            std::process::id()
+        ));
         let original = "bind = SUPER, Q, exec, foo\n";
         fs::write(&source, original).unwrap();
 
@@ -2492,7 +2717,11 @@ mod tests {
         assert!(app.editing_line.is_none());
         assert!(app.duplicate_fix_mods_raw.is_none());
         assert!(app.duplicate_conflict_line.is_none());
-        assert_eq!(fs::read_to_string(&source).unwrap(), original, "cancel must never write anything");
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            original,
+            "cancel must never write anything"
+        );
 
         fs::remove_file(&source).unwrap();
     }
@@ -2504,7 +2733,11 @@ mod tests {
         app.source_path = PathBuf::from("/some/default.lua");
         app.start_add_shortcut();
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.status.as_deref().is_some_and(|s| s.contains("Lua-format")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.contains("Lua-format"))
+        );
     }
 
     #[test]
@@ -2520,8 +2753,10 @@ mod tests {
 
     #[test]
     fn save_new_shortcut_rejects_empty_input_and_leaves_the_file_untouched() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-add-empty-{}.conf", std::process::id()));
+        let source = std::env::temp_dir().join(format!(
+            "hyprbind-test-add-empty-{}.conf",
+            std::process::id()
+        ));
         fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -2542,8 +2777,8 @@ mod tests {
 
     #[test]
     fn save_new_shortcut_appends_a_placeholder_bind_and_selects_it() {
-        let source = std::env::temp_dir()
-            .join(format!("hyprbind-test-add-new-{}.conf", std::process::id()));
+        let source =
+            std::env::temp_dir().join(format!("hyprbind-test-add-new-{}.conf", std::process::id()));
         fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
@@ -2555,12 +2790,19 @@ mod tests {
         app.save_new_shortcut();
 
         assert_eq!(app.mode, Mode::Normal);
-        assert!(app.status.as_deref().is_some_and(|s| s.starts_with("Added.")));
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|s| s.starts_with("Added."))
+        );
 
         let contents = fs::read_to_string(&source).unwrap();
         assert!(contents.contains("bind = , CHANGEME, exec # Launch the launcher"));
 
-        let selected = app.table_state.selected().and_then(|idx| app.visible().get(idx).copied());
+        let selected = app
+            .table_state
+            .selected()
+            .and_then(|idx| app.visible().get(idx).copied());
         assert!(selected.is_some_and(|s| s.comment.as_deref() == Some("Launch the launcher")));
 
         fs::remove_file(&source).unwrap();
@@ -2584,7 +2826,8 @@ mod tests {
 
     #[test]
     fn append_lines_adds_marker_comment_and_preserves_existing_content() {
-        let path = std::env::temp_dir().join(format!("hyprbind-test-append-{}.conf", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("hyprbind-test-append-{}.conf", std::process::id()));
         fs::write(&path, "bind = $mainMod, Q, killactive\n").unwrap();
 
         append_lines(

@@ -28,7 +28,9 @@ pub fn read_to_string_capped(path: &Path) -> io::Result<String> {
     if size > MAX_SOURCE_FILE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("file is {size} bytes, over the {MAX_SOURCE_FILE_BYTES}-byte limit hyprbind reads"),
+            format!(
+                "file is {size} bytes, over the {MAX_SOURCE_FILE_BYTES}-byte limit hyprbind reads"
+            ),
         ));
     }
     fs::read_to_string(path)
@@ -40,19 +42,26 @@ mod tests {
 
     #[test]
     fn read_to_string_capped_reads_a_normal_sized_file() {
-        let path = std::env::temp_dir()
-            .join(format!("hyprbind-test-read-capped-small-{}.conf", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "hyprbind-test-read-capped-small-{}.conf",
+            std::process::id()
+        ));
         fs::write(&path, "bind = SUPER, Q, killactive\n").unwrap();
 
-        assert_eq!(read_to_string_capped(&path).unwrap(), "bind = SUPER, Q, killactive\n");
+        assert_eq!(
+            read_to_string_capped(&path).unwrap(),
+            "bind = SUPER, Q, killactive\n"
+        );
 
         fs::remove_file(&path).unwrap();
     }
 
     #[test]
     fn read_to_string_capped_refuses_a_file_over_the_limit() {
-        let path = std::env::temp_dir()
-            .join(format!("hyprbind-test-read-capped-huge-{}.conf", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "hyprbind-test-read-capped-huge-{}.conf",
+            std::process::id()
+        ));
         // A sparse file: claims to be over the limit without actually writing that much data.
         let file = fs::File::create(&path).unwrap();
         file.set_len(MAX_SOURCE_FILE_BYTES + 1).unwrap();

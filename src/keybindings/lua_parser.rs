@@ -61,7 +61,10 @@ pub fn parse_str(contents: &str) -> ParsedConfig {
         }
     }
 
-    ParsedConfig { shortcuts, variables }
+    ParsedConfig {
+        shortcuts,
+        variables,
+    }
 }
 
 fn is_for_loop_start(line: &str) -> bool {
@@ -81,7 +84,10 @@ fn parse_local_string(line: &str) -> Option<(String, String, Option<String>)> {
 
     let rest = rest.trim().strip_prefix('"')?;
     let (value, after) = rest.split_once('"')?;
-    let comment = after.trim().strip_prefix("--").map(|c| c.trim().to_string());
+    let comment = after
+        .trim()
+        .strip_prefix("--")
+        .map(|c| c.trim().to_string());
     Some((name, value.to_string(), comment))
 }
 
@@ -103,7 +109,10 @@ fn parse_bind_line(
     if dispatcher_raw.is_empty() {
         return None;
     }
-    let options_raw = parts.get(2).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let options_raw = parts
+        .get(2)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let (mods_raw, key_raw, mods, key) = parse_key_expr(key_expr, vars)?;
     let description = options_raw.as_deref().and_then(extract_description);
@@ -132,37 +141,50 @@ fn parse_bind_line(
 /// Split a Hyprland-modifier key expression (`hl.bind`'s first argument) into raw (unresolved,
 /// `$VAR`-marked, see `Shortcut::mods_raw`) and resolved mods/key. Returns `(mods_raw, key_raw,
 /// mods, key)`.
-fn parse_key_expr(expr: &str, vars: &HashMap<String, String>) -> Option<(String, String, Vec<String>, String)> {
-    let (raw_tokens, resolved_tokens): (Vec<String>, Vec<String>) = if let Some((var_part, str_part)) =
-        expr.split_once("..")
-    {
-        let var_name = var_part.trim();
-        if !is_ident(var_name) {
-            return None;
-        }
-        let literal = extract_quoted(str_part.trim())?;
-        let str_tokens: Vec<&str> = literal.split(" + ").map(str::trim).filter(|t| !t.is_empty()).collect();
-        if str_tokens.is_empty() {
-            return None;
-        }
+fn parse_key_expr(
+    expr: &str,
+    vars: &HashMap<String, String>,
+) -> Option<(String, String, Vec<String>, String)> {
+    let (raw_tokens, resolved_tokens): (Vec<String>, Vec<String>) =
+        if let Some((var_part, str_part)) = expr.split_once("..") {
+            let var_name = var_part.trim();
+            if !is_ident(var_name) {
+                return None;
+            }
+            let literal = extract_quoted(str_part.trim())?;
+            let str_tokens: Vec<&str> = literal
+                .split(" + ")
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .collect();
+            if str_tokens.is_empty() {
+                return None;
+            }
 
-        let mut raw = vec![format!("${var_name}")];
-        raw.extend(str_tokens.iter().map(|t| t.to_string()));
+            let mut raw = vec![format!("${var_name}")];
+            raw.extend(str_tokens.iter().map(|t| t.to_string()));
 
-        let resolved_var = vars.get(var_name).cloned().unwrap_or_else(|| var_name.to_string());
-        let mut resolved = vec![resolved_var];
-        resolved.extend(str_tokens.iter().map(|t| t.to_string()));
+            let resolved_var = vars
+                .get(var_name)
+                .cloned()
+                .unwrap_or_else(|| var_name.to_string());
+            let mut resolved = vec![resolved_var];
+            resolved.extend(str_tokens.iter().map(|t| t.to_string()));
 
-        (raw, resolved)
-    } else {
-        let literal = extract_quoted(expr.trim())?;
-        let tokens: Vec<String> =
-            literal.split(" + ").map(str::trim).filter(|t| !t.is_empty()).map(String::from).collect();
-        if tokens.is_empty() {
-            return None;
-        }
-        (tokens.clone(), tokens)
-    };
+            (raw, resolved)
+        } else {
+            let literal = extract_quoted(expr.trim())?;
+            let tokens: Vec<String> = literal
+                .split(" + ")
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(String::from)
+                .collect();
+            if tokens.is_empty() {
+                return None;
+            }
+            (tokens.clone(), tokens)
+        };
 
     let key_raw = raw_tokens.last()?.clone();
     let mods_raw = raw_tokens[..raw_tokens.len() - 1].join(" ");
@@ -235,7 +257,10 @@ fn is_ident(s: &str) -> bool {
 /// Pull `description = "..."` out of an `hl.bind` options table's raw text, if present.
 fn extract_description(options: &str) -> Option<String> {
     let idx = options.find("description")?;
-    let after = options[idx + "description".len()..].trim_start().strip_prefix('=')?.trim_start();
+    let after = options[idx + "description".len()..]
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
     let after = after.strip_prefix('"')?;
     let end = after.find('"')?;
     Some(after[..end].to_string())
@@ -243,7 +268,10 @@ fn extract_description(options: &str) -> Option<String> {
 
 /// A `-- comment` trailing the closing `)` of an `hl.bind(...)` call, on the same line.
 fn extract_trailing_comment(after_call: &str) -> Option<String> {
-    after_call.trim_start().strip_prefix("--").map(|c| c.trim().to_string())
+    after_call
+        .trim_start()
+        .strip_prefix("--")
+        .map(|c| c.trim().to_string())
 }
 
 #[cfg(test)]
@@ -258,7 +286,10 @@ mod tests {
         let s = &shortcuts[0];
         assert_eq!(s.mods, vec!["CTRL", "ALT"]);
         assert_eq!(s.key, "T");
-        assert_eq!(s.dispatcher, "hl.dsp.exec_cmd(\"~/.config/ml4w/themes/themes.sh\")");
+        assert_eq!(
+            s.dispatcher,
+            "hl.dsp.exec_cmd(\"~/.config/ml4w/themes/themes.sh\")"
+        );
         assert_eq!(s.args, "");
         assert_eq!(s.description.as_deref(), Some("Open Select Window Menu"));
         assert_eq!(s.format, SourceFormat::Lua);
@@ -281,7 +312,10 @@ mod tests {
         let input = "hl.bind(mainMod .. \" + SHIFT + right\", hl.dsp.window.resize({ x = 100, y = 0 }), { description = \"Widen\" })\n";
         let shortcuts = parse_str(input).shortcuts;
         assert_eq!(shortcuts.len(), 1);
-        assert_eq!(shortcuts[0].dispatcher, "hl.dsp.window.resize({ x = 100, y = 0 })");
+        assert_eq!(
+            shortcuts[0].dispatcher,
+            "hl.dsp.window.resize({ x = 100, y = 0 })"
+        );
     }
 
     #[test]
@@ -294,7 +328,8 @@ mod tests {
 
     #[test]
     fn skips_full_line_comments_including_commented_out_binds() {
-        let input = "-- hl.bind(mainMod .. \" + Q\", hl.dsp.window.close(), { description = \"Kill\" })\n";
+        let input =
+            "-- hl.bind(mainMod .. \" + Q\", hl.dsp.window.close(), { description = \"Kill\" })\n";
         assert!(parse_str(input).shortcuts.is_empty());
     }
 
@@ -305,7 +340,10 @@ mod tests {
         assert_eq!(variables.len(), 1);
         assert_eq!(variables[0].name, "mainMod");
         assert_eq!(variables[0].value, "SUPER");
-        assert_eq!(variables[0].comment.as_deref(), Some("Sets \"Windows\" key as main modifier"));
+        assert_eq!(
+            variables[0].comment.as_deref(),
+            Some("Sets \"Windows\" key as main modifier")
+        );
         assert_eq!(variables[0].format, SourceFormat::Lua);
     }
 

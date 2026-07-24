@@ -38,8 +38,10 @@ mod tests {
 
     #[test]
     fn parse_file_refuses_a_file_over_the_size_cap() {
-        let path = std::env::temp_dir()
-            .join(format!("hyprbind-test-parse-file-huge-{}.conf", std::process::id()));
+        let path = std::env::temp_dir().join(format!(
+            "hyprbind-test-parse-file-huge-{}.conf",
+            std::process::id()
+        ));
         let file = std::fs::File::create(&path).unwrap();
         file.set_len(17 * 1024 * 1024).unwrap();
 

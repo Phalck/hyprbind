@@ -42,7 +42,10 @@ pub fn parse_str(contents: &str) -> ParsedConfig {
         }
     }
 
-    ParsedConfig { shortcuts, variables }
+    ParsedConfig {
+        shortcuts,
+        variables,
+    }
 }
 
 fn parse_bind_line(
@@ -147,8 +150,7 @@ mod tests {
 
     #[test]
     fn parses_exec_with_args_and_resolves_vars() {
-        let input =
-            "$mainMod = SUPER\n$HYPRSCRIPTS = ~/.config/hypr/scripts\nbind = $mainMod SHIFT, A, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations\n";
+        let input = "$mainMod = SUPER\n$HYPRSCRIPTS = ~/.config/hypr/scripts\nbind = $mainMod SHIFT, A, exec, $HYPRSCRIPTS/toggle-animations.sh # Toggle animations\n";
         let shortcuts = parse_str(input).shortcuts;
         assert_eq!(shortcuts.len(), 1);
         let s = &shortcuts[0];

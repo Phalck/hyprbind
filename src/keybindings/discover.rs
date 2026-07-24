@@ -25,7 +25,11 @@ pub fn discover(root: &Path) -> Option<PathBuf> {
 /// Collect every `.conf` or `.lua` file under `dir`, following symlinked directories (several
 /// dotfiles managers populate `~/.config/hypr` entirely via symlinks) but guarding against
 /// cycles via a canonicalized-path visited set, plus a depth cap as a second safety net.
-fn keybinding_files(dir: &Path, depth_remaining: u32, visited: &mut HashSet<PathBuf>) -> Vec<PathBuf> {
+fn keybinding_files(
+    dir: &Path,
+    depth_remaining: u32,
+    visited: &mut HashSet<PathBuf>,
+) -> Vec<PathBuf> {
     if depth_remaining == 0 {
         return Vec::new();
     }
@@ -44,7 +48,10 @@ fn keybinding_files(dir: &Path, depth_remaining: u32, visited: &mut HashSet<Path
         let path = entry.path();
         if path.is_dir() {
             files.extend(keybinding_files(&path, depth_remaining - 1, visited));
-        } else if matches!(path.extension().and_then(|ext| ext.to_str()), Some("conf") | Some("lua")) {
+        } else if matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("conf") | Some("lua")
+        ) {
             files.push(path);
         }
     }
@@ -57,7 +64,10 @@ mod tests {
     use std::fs;
 
     fn scratch_dir(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!("hyprbind-discover-test-{name}-{}", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "hyprbind-discover-test-{name}-{}",
+            std::process::id()
+        ))
     }
 
     #[test]
