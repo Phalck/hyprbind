@@ -618,6 +618,17 @@ impl App {
         self.commit_edit(new_line);
     }
 
+    /// The raw source text last loaded at `line_no`, from whichever collection (shortcuts or
+    /// variables) has it. Passed to `write_line` as an optimistic-concurrency check: if the file
+    /// on disk no longer has this exact text at that line, it changed since the last load.
+    fn expected_line_at(&self, line_no: usize) -> Option<&str> {
+        self.shortcuts
+            .iter()
+            .find(|s| s.line == line_no)
+            .map(|s| s.raw.as_str())
+            .or_else(|| self.variables.iter().find(|v| v.line == line_no).map(|v| v.raw.as_str()))
+    }
+
     /// Write `new_line` to `source_path` at `editing_line` (if present), report the result, and
     /// return to `Mode::Normal`. Shared by the direct `save_edit` path and, after a detour
     /// through `Mode::DuplicateKeyConfirm`, `accept_duplicate_fix`.
@@ -627,15 +638,18 @@ impl App {
         };
 
         match new_line {
-            Some(new_line) => match write_line(&self.source_path, line_no, &new_line) {
-                Ok(()) => {
-                    self.set_status("Saved.".to_string());
-                    self.reload_and_reselect(self.resume_line.unwrap_or(line_no));
+            Some(new_line) => {
+                let expected_old_line = self.expected_line_at(line_no).map(str::to_string);
+                match write_line(&self.source_path, line_no, expected_old_line.as_deref(), &new_line) {
+                    Ok(()) => {
+                        self.set_status("Saved.".to_string());
+                        self.reload_and_reselect(self.resume_line.unwrap_or(line_no));
+                    }
+                    Err(err) => {
+                        self.set_status(format!("Failed to save: {err}"));
+                    }
                 }
-                Err(err) => {
-                    self.set_status(format!("Failed to save: {err}"));
-                }
-            },
+            }
             None => {
                 self.set_status("Couldn't save: not found in the current file.".to_string());
             }
@@ -1350,11 +1364,17 @@ impl App {
 
 /// Replace line `line_no` (1-based) of `contents` with `new_line`, preserving every other line
 /// and whether the file ended with a trailing newline. Returns `None` if `line_no` is out of
-/// range for `contents` (e.g. the file changed on disk since it was parsed).
-fn replace_line(contents: &str, line_no: usize, new_line: &str) -> Option<String> {
+/// range for `contents`, or if `expected_old_line` is given and doesn't match what's actually
+/// there — either way, the file changed on disk since it was parsed.
+fn replace_line(contents: &str, line_no: usize, expected_old_line: Option<&str>, new_line: &str) -> Option<String> {
     let mut lines: Vec<&str> = contents.lines().collect();
     let idx = line_no.checked_sub(1)?;
     if idx >= lines.len() {
+        return None;
+    }
+    if let Some(expected) = expected_old_line
+        && lines[idx] != expected
+    {
         return None;
     }
     lines[idx] = new_line;
@@ -1367,9 +1387,13 @@ fn replace_line(contents: &str, line_no: usize, new_line: &str) -> Option<String
 }
 
 /// Read `path`, replace line `line_no` with `new_line`, and write the result back atomically.
-fn write_line(path: &Path, line_no: usize, new_line: &str) -> io::Result<()> {
+/// `expected_old_line`, when given, must match the line's current on-disk text or the write is
+/// refused — guards against clobbering a change made by another hyprbind instance or a hand edit
+/// since this line was last loaded (the file can change without its line count changing, which a
+/// bounds check alone wouldn't catch).
+fn write_line(path: &Path, line_no: usize, expected_old_line: Option<&str>, new_line: &str) -> io::Result<()> {
     let contents = fs::read_to_string(path)?;
-    let updated = replace_line(&contents, line_no, new_line).ok_or_else(|| {
+    let updated = replace_line(&contents, line_no, expected_old_line, new_line).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
             "source file changed on disk; reload and try again",
@@ -1430,22 +1454,38 @@ mod tests {
     #[test]
     fn replace_line_swaps_only_target_line() {
         let contents = "one\ntwo\nthree\n";
-        let updated = replace_line(contents, 2, "TWO").unwrap();
+        let updated = replace_line(contents, 2, None, "TWO").unwrap();
         assert_eq!(updated, "one\nTWO\nthree\n");
     }
 
     #[test]
     fn replace_line_preserves_missing_trailing_newline() {
         let contents = "one\ntwo\nthree";
-        let updated = replace_line(contents, 1, "ONE").unwrap();
+        let updated = replace_line(contents, 1, None, "ONE").unwrap();
         assert_eq!(updated, "ONE\ntwo\nthree");
     }
 
     #[test]
     fn replace_line_out_of_range_returns_none() {
         let contents = "one\ntwo\n";
-        assert!(replace_line(contents, 5, "x").is_none());
-        assert!(replace_line(contents, 0, "x").is_none());
+        assert!(replace_line(contents, 5, None, "x").is_none());
+        assert!(replace_line(contents, 0, None, "x").is_none());
+    }
+
+    #[test]
+    fn replace_line_matching_expected_old_line_succeeds() {
+        let contents = "one\ntwo\nthree\n";
+        let updated = replace_line(contents, 2, Some("two"), "TWO").unwrap();
+        assert_eq!(updated, "one\nTWO\nthree\n");
+    }
+
+    #[test]
+    fn replace_line_refuses_when_expected_old_line_does_not_match() {
+        let contents = "one\ntwo\nthree\n";
+        assert!(
+            replace_line(contents, 2, Some("something else"), "TWO").is_none(),
+            "the file changed since expected_old_line was captured, so the write must be refused"
+        );
     }
 
     #[test]
@@ -1967,7 +2007,7 @@ mod tests {
     fn save_edit_editkey_no_conflict_saves_normally() {
         let source = std::env::temp_dir()
             .join(format!("hyprbind-test-dupkey-noconflict-{}.conf", std::process::id()));
-        fs::write(&source, "bind = SUPER, Q, exec, foo\nbind = SUPER, W, exec, bar\n").unwrap();
+        fs::write(&source, "bind = $mainMod, Q, exec, foo\nbind = $mainMod, W, exec, foo\n").unwrap();
 
         let mut app = edit_app();
         app.source_path = source.clone();
@@ -1982,6 +2022,39 @@ mod tests {
         assert_eq!(app.status.as_deref(), Some("Saved."));
         let contents = fs::read_to_string(&source).unwrap();
         assert!(contents.lines().next().unwrap().contains(", E,"));
+
+        fs::remove_file(&source).unwrap();
+    }
+
+    #[test]
+    fn save_edit_refuses_to_overwrite_a_line_changed_since_load() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-concurrent-writer-{}.conf", std::process::id()));
+        // Loaded by hyprbind with this content...
+        fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.shortcuts = vec![sample_shortcut(1, "Q")];
+        app.mode = Mode::EditKey;
+        app.editing_line = Some(1);
+        app.edit_buffer = "SUPER, E".to_string();
+
+        // ...then something else (another hyprbind instance, or a hand edit) changes line 1
+        // without changing the line count, before this edit is saved.
+        fs::write(&source, "bind = $mainMod, Q, exec, somethingelse\n").unwrap();
+
+        app.save_edit();
+
+        assert_eq!(
+            app.status.as_deref(),
+            Some("Failed to save: source file changed on disk; reload and try again")
+        );
+        assert_eq!(
+            fs::read_to_string(&source).unwrap(),
+            "bind = $mainMod, Q, exec, somethingelse\n",
+            "the concurrent change must survive untouched"
+        );
 
         fs::remove_file(&source).unwrap();
     }
@@ -2106,6 +2179,7 @@ mod tests {
         app.source_path = source.clone();
         let mut s = sample_shortcut(1, "Q");
         s.comment = Some("Old comment".to_string());
+        s.raw = "bind = $mainMod, Q, exec, foo # Old comment".to_string();
         app.shortcuts = vec![s];
         app.mode = Mode::EditDescription;
         app.editing_line = Some(1);
@@ -2271,7 +2345,7 @@ mod tests {
     fn save_edit_editkey_unchanged_combo_is_not_flagged_as_a_self_conflict() {
         let source = std::env::temp_dir()
             .join(format!("hyprbind-test-dupkey-selfsame-{}.conf", std::process::id()));
-        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+        fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
         app.source_path = source.clone();
@@ -2340,6 +2414,7 @@ mod tests {
             line: 1,
             format: SourceFormat::Conf,
             comment: None,
+            raw: "$mainMod = SUPER".to_string(),
         }];
         app.shortcuts = vec![
             shortcut_with_mods(2, &["SUPER"], "Q"),
@@ -2360,7 +2435,7 @@ mod tests {
     fn accept_duplicate_fix_writes_the_fixed_combo_and_returns_to_normal() {
         let source = std::env::temp_dir()
             .join(format!("hyprbind-test-dupkey-acceptfix-{}.conf", std::process::id()));
-        fs::write(&source, "bind = SUPER, Q, exec, foo\n").unwrap();
+        fs::write(&source, "bind = $mainMod, Q, exec, foo\n").unwrap();
 
         let mut app = edit_app();
         app.source_path = source.clone();

@@ -22,6 +22,10 @@ pub struct Variable {
     /// Trailing `-- ...` comment on the definition line. Only ever populated for `Lua`
     /// variables; `.conf` `$VAR = value` lines have no comment syntax of their own.
     pub comment: Option<String>,
+    /// The exact source line as read, before trimming. Used as an optimistic-concurrency check
+    /// before writing an edit back: if the file no longer has this text at `line`, something
+    /// else changed it since it was loaded.
+    pub raw: String,
 }
 
 /// A single parsed keybinding line, e.g. `bind = $mainMod, Q, killactive # Kill active window`.

@@ -31,6 +31,7 @@ pub fn parse_str(contents: &str) -> ParsedConfig {
                     line: line_no,
                     format: SourceFormat::Conf,
                     comment: None,
+                    raw: raw_line.to_string(),
                 });
             }
             continue;
@@ -195,6 +196,7 @@ mod tests {
                     line: 1,
                     format: SourceFormat::Conf,
                     comment: None,
+                    raw: "$mainMod = SUPER".to_string(),
                 },
                 Variable {
                     name: "HYPRSCRIPTS".to_string(),
@@ -202,6 +204,7 @@ mod tests {
                     line: 2,
                     format: SourceFormat::Conf,
                     comment: None,
+                    raw: "$HYPRSCRIPTS = ~/.config/hypr/scripts".to_string(),
                 },
             ]
         );

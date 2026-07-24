@@ -45,7 +45,14 @@ pub fn parse_str(contents: &str) -> ParsedConfig {
 
         if let Some((name, value, comment)) = parse_local_string(line) {
             vars.insert(name.clone(), value.clone());
-            variables.push(Variable { name, value, line: line_no, format: SourceFormat::Lua, comment });
+            variables.push(Variable {
+                name,
+                value,
+                line: line_no,
+                format: SourceFormat::Lua,
+                comment,
+                raw: raw_line.to_string(),
+            });
             continue;
         }
 
