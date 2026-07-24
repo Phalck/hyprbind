@@ -26,6 +26,21 @@ const NEW_SHORTCUT_KEY: &str = "CHANGEME";
 /// Placeholder dispatcher a freshly-added shortcut is bound to until `a` replaces it.
 const NEW_SHORTCUT_DISPATCHER: &str = "exec";
 
+/// Path for a new backup file, disambiguated if `{stem}-{timestamp}.{BACKUP_EXTENSION}` already
+/// exists (e.g. two backups triggered within the same second, since `timestamp_string` only has
+/// 1-second resolution). Appends `-2`, `-3`, ... before the extension until a free name is found,
+/// so a second `b` press never silently overwrites the first backup.
+fn unique_backup_path(dir: &Path, stem: &str, timestamp: &str) -> PathBuf {
+    let base = dir.join(format!("{stem}-{timestamp}.{BACKUP_EXTENSION}"));
+    if !base.exists() {
+        return base;
+    }
+    (2..)
+        .map(|n| dir.join(format!("{stem}-{timestamp}-{n}.{BACKUP_EXTENSION}")))
+        .find(|candidate| !candidate.exists())
+        .expect("infinite iterator always yields a free path")
+}
+
 fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()))
 }
@@ -1176,9 +1191,7 @@ impl App {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("hyprbind");
-        let path = self
-            .backup_folder
-            .join(format!("{stem}-{}.{BACKUP_EXTENSION}", timestamp_string()));
+        let path = unique_backup_path(&self.backup_folder, stem, &timestamp_string());
 
         match fs::copy(&self.source_path, &path) {
             Ok(_) => self.set_status(format!("Backed up to {}.", path.display())),
@@ -1761,6 +1774,38 @@ mod tests {
         let backup_path = entries[0].path();
         assert_eq!(backup_path.extension().and_then(|e| e.to_str()), Some(BACKUP_EXTENSION));
         assert_eq!(fs::read_to_string(&backup_path).unwrap(), contents);
+
+        fs::remove_file(&source).unwrap();
+        fs::remove_dir_all(&backup_dir).unwrap();
+    }
+
+    #[test]
+    fn create_backup_does_not_overwrite_an_existing_backup_with_the_same_timestamp() {
+        let source = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-collision-source-{}.conf", std::process::id()));
+        let backup_dir = std::env::temp_dir()
+            .join(format!("hyprbind-test-backup-collision-dir-{}", std::process::id()));
+        fs::create_dir_all(&backup_dir).unwrap();
+        fs::write(&source, "bind = $mainMod, Q, killactive\n").unwrap();
+
+        // Simulate a backup that already exists for "now" (as if `b` had just been pressed).
+        let stem = source.file_stem().and_then(|s| s.to_str()).unwrap();
+        let ts = timestamp_string();
+        let existing = backup_dir.join(format!("{stem}-{ts}.{BACKUP_EXTENSION}"));
+        fs::write(&existing, "previous backup contents").unwrap();
+
+        let mut app = edit_app();
+        app.source_path = source.clone();
+        app.backup_folder = backup_dir.clone();
+        app.create_backup();
+
+        assert_eq!(
+            fs::read_to_string(&existing).unwrap(),
+            "previous backup contents",
+            "the earlier backup must survive untouched"
+        );
+        let entries: Vec<_> = fs::read_dir(&backup_dir).unwrap().filter_map(|e| e.ok()).collect();
+        assert_eq!(entries.len(), 2, "the new backup should land alongside the old one, not replace it");
 
         fs::remove_file(&source).unwrap();
         fs::remove_dir_all(&backup_dir).unwrap();
