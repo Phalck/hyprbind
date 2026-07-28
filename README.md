@@ -478,7 +478,19 @@ cargo test
 build.rs                 bakes the build's git commit hash into --version
 src/
   main.rs               entry point and the key handling loop
-  app.rs                application state: loaded shortcuts, selection, errors
+  app.rs                the App struct and its core lifecycle (load, status, persistence)
+  app/
+    edit.rs               field editing, cursor movement, duplicate-key conflict detection
+    shortcuts.rs           adding and deleting a shortcut
+    template.rs            template folder, save/load/apply
+    backup.rs               backup folder, create/list/restore
+    settings.rs             keybindings file path, terminal command
+    script.rs                o: open a terminal at a shortcut's script
+    search.rs                search mode
+    navigation.rs            row selection
+    lines.rs                  low-level line replace/remove/append file I/O
+    paths.rs                  ~ expansion, $HOME helpers
+    test_support.rs           shared test fixtures
   ui.rs                 rendering: title bar, table, footer
   config.rs             reads/writes ~/.config/hyprbind/config
   fs_util.rs            shared atomic-write helper
